@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Combobox from "../components/Combobox.jsx";
 import GovernedRuntimeExplainabilityPanel from "../components/workflows/GovernedRuntimeExplainabilityPanel.jsx";
 import {
-  closePeriod,
   cancelJournalDraft,
   createJournal,
   getJournal,
@@ -29,6 +28,12 @@ import {
   listLegalEntities,
   listOperatingUnits,
 } from "../api/orgAdmin.js";
+import {
+  getPeriodCloseMissingPermissionMessage,
+  hasAnyPeriodCloseViewPermission,
+  hasPeriodCloseExecutionPermission,
+  hasPeriodCloseReopenPermission,
+} from "../auth/permissionAccess.js";
 import { useAuth } from "../auth/useAuth.js";
 import MoneyText from "../components/MoneyText.jsx";
 import { Link, useSearchParams } from "react-router-dom";
@@ -60,7 +65,6 @@ const JOURNAL_SOURCE_TYPES = [
   "ADJUSTMENT",
 ];
 const JOURNAL_STATUSES = ["DRAFT", "POSTED", "REVERSED", "CANCELLED"];
-const PERIOD_STATUSES = ["OPEN", "SOFT_CLOSED", "HARD_CLOSED"];
 const JOURNAL_HISTORY_FILTERS_STORAGE_SCOPE = "journal-workbench.history";
 const JOURNAL_COMPLIANCE_FILTERS_STORAGE_SCOPE = "journal-workbench.compliance";
 const JOURNAL_HISTORY_DEFAULT_FILTERS = {
@@ -579,8 +583,9 @@ export default function JournalWorkbenchPage() {
   const canPost = hasPermission("gl.journal.post");
   const canReverse = hasPermission("gl.journal.reverse");
   const canReadTrialBalance = hasPermission("gl.trial_balance.read");
-  const canClosePeriod = hasPermission("gl.period.close");
-  const canReopenPeriod = hasPermission("gl.period.reopen");
+  const canViewPeriodClose = hasAnyPeriodCloseViewPermission(hasPermission);
+  const canClosePeriod = hasPeriodCloseExecutionPermission(hasPermission);
+  const canReopenPeriod = hasPeriodCloseReopenPermission(hasPermission);
   const canOverrideCashFxRevaluation = hasPermission("cash.fx.revaluation.override");
   const canReadIntercompanyFlags = hasPermission("intercompany.flag.read");
   const canUpsertIntercompanyFlags = hasPermission("intercompany.flag.upsert");
@@ -637,8 +642,6 @@ export default function JournalWorkbenchPage() {
   const [periodForm, setPeriodForm] = useState({
     bookId: "",
     periodId: "",
-    status: "SOFT_CLOSED",
-    note: "",
   });
   const [periodCloseForm, setPeriodCloseForm] = useState({
     closeStatus: "SOFT_CLOSED",
@@ -889,10 +892,6 @@ export default function JournalWorkbenchPage() {
   );
   const sourceTypeOptions = useMemo(
     () => JOURNAL_SOURCE_TYPES.map((value) => ({ value, label: value })),
-    []
-  );
-  const periodStatusOptions = useMemo(
-    () => PERIOD_STATUSES.map((value) => ({ value, label: value })),
     []
   );
   const periodCloseStatusOptions = useMemo(
@@ -1239,6 +1238,7 @@ export default function JournalWorkbenchPage() {
         workflowGateBlock: periodCloseWorkflowGate,
         fxGateBlock: periodCloseFxGate,
         canClosePeriod,
+        canReadPeriods,
         canReopenPeriod,
         canReadTrialBalance,
         canReadJournals,
@@ -1248,6 +1248,7 @@ export default function JournalWorkbenchPage() {
       }),
     [
       canClosePeriod,
+      canReadPeriods,
       canReopenPeriod,
       canOverrideCashFxRevaluation,
       canReadJournals,
@@ -1272,7 +1273,11 @@ export default function JournalWorkbenchPage() {
   useEffect(() => {
     const bookId = toInt(periodForm.bookId);
     const periodId = toInt(periodForm.periodId);
-    if (!bookId || !periodId) return;
+    if (!bookId || !periodId || !canViewPeriodClose) {
+      setPreCloseReview(null);
+      setLoadingPreCloseReview(false);
+      return;
+    }
     let cancelled = false;
     setLoadingPreCloseReview(true);
     getPreCloseReview(bookId, periodId)
@@ -1280,7 +1285,7 @@ export default function JournalWorkbenchPage() {
       .catch(() => { if (!cancelled) setPreCloseReview(null); })
       .finally(() => { if (!cancelled) setLoadingPreCloseReview(false); });
     return () => { cancelled = true; };
-  }, [periodForm.bookId, periodForm.periodId]);
+  }, [canViewPeriodClose, periodForm.bookId, periodForm.periodId]);
   const selectedEntityIntercompanyEnabled = Boolean(
     selectedLegalEntity?.is_intercompany_enabled ?? true
   );
@@ -1462,7 +1467,7 @@ export default function JournalWorkbenchPage() {
   useEffect(() => {
     let cancelled = false;
     async function loadPeriodsByBook() {
-      if (!canReadPeriods || !selectedBookId) {
+      if (!(canReadPeriods || canViewPeriodClose) || !selectedBookId) {
         setPeriods([]);
         return;
       }
@@ -1492,7 +1497,7 @@ export default function JournalWorkbenchPage() {
     return () => {
       cancelled = true;
     };
-  }, [canReadPeriods, selectedBookId, books, l]);
+  }, [canReadPeriods, canViewPeriodClose, selectedBookId, books, l]);
 
   useEffect(() => {
     setJournal((prev) => {
@@ -3036,46 +3041,9 @@ export default function JournalWorkbenchPage() {
     }
   }
 
-  async function onUpdatePeriodStatus(event) {
-    event.preventDefault();
-    if (!canClosePeriod) {
-      setError(l("Missing permission: gl.period.close", "Eksik yetki: gl.period.close"));
-      return;
-    }
-
-    const bookId = toInt(periodForm.bookId);
-    const periodId = toInt(periodForm.periodId);
-    if (!bookId || !periodId) {
-      setError(l("bookId and periodId are required.", "bookId ve periodId zorunludur."));
-      return;
-    }
-
-    setSaving("periodStatus");
-    setError("");
-    setMessage("");
-    try {
-      const res = await closePeriod(bookId, periodId, {
-        status: periodForm.status,
-        note: periodForm.note.trim() || undefined,
-      });
-      setMessage(
-        l(
-          `Period status updated: ${res?.previousStatus || "-"} -> ${res?.status || "-"}`,
-          `Donem durumu guncellendi: ${res?.previousStatus || "-"} -> ${res?.status || "-"}`
-        )
-      );
-    } catch (err) {
-      setError(
-        err?.response?.data?.message || l("Failed to update period status.", "Donem durumu guncellenemedi.")
-      );
-    } finally {
-      setSaving("");
-    }
-  }
-
   async function onLoadPeriodCloseRuns() {
-    if (!canClosePeriod) {
-      setError(l("Missing permission: gl.period.close", "Eksik yetki: gl.period.close"));
+    if (!canViewPeriodClose) {
+      setError(getPeriodCloseMissingPermissionMessage("view", l));
       return;
     }
 
@@ -3107,7 +3075,7 @@ export default function JournalWorkbenchPage() {
   async function onExecutePeriodClose(event) {
     event.preventDefault();
     if (!canClosePeriod) {
-      setError(l("Missing permission: gl.period.close", "Eksik yetki: gl.period.close"));
+      setError(getPeriodCloseMissingPermissionMessage("execute", l));
       return;
     }
 
@@ -3207,7 +3175,7 @@ export default function JournalWorkbenchPage() {
   async function onReopenPeriodClose(event) {
     event.preventDefault();
     if (!canReopenPeriod) {
-      setError(l("Missing permission: gl.period.reopen", "Eksik yetki: gl.period.reopen"));
+      setError(getPeriodCloseMissingPermissionMessage("reopen", l));
       return;
     }
 
@@ -3726,9 +3694,11 @@ export default function JournalWorkbenchPage() {
         </form>
 
         <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-4">
-          <h2 className="text-sm font-semibold text-slate-700">{l("Period Status & Auto Close", "Donem Durumu ve Otomatik Kapanis")}</h2>
+          <h2 className="text-sm font-semibold text-slate-700">
+            {l("Period Close Governance", "Donem Kapanisi Yonetisimi")}
+          </h2>
 
-          <form onSubmit={onUpdatePeriodStatus} className="grid gap-2 md:grid-cols-2">
+          <form className="grid gap-2 md:grid-cols-2">
             <Combobox
               value={periodForm.bookId || null}
               options={bookOptions}
@@ -3773,20 +3743,14 @@ export default function JournalWorkbenchPage() {
               noOptionsText={l("No periods found.", "Donem bulunamadi.")}
               clearable={false}
             />
-            <Combobox
-              value={periodForm.status || null}
-              options={periodStatusOptions}
-              onChange={(nextValue) =>
-                setPeriodForm((prev) => ({
-                  ...prev,
-                  status: nextValue ? String(nextValue) : "SOFT_CLOSED",
-                }))
-              }
-              clearable={false}
-            />
-            <input value={periodForm.note} onChange={(event) => setPeriodForm((prev) => ({ ...prev, note: event.target.value }))} className="w-full rounded border border-slate-300 px-3 py-2 text-sm" placeholder={l("Manual status note (optional)", "Elle durum notu (opsiyonel)")} />
-            <button type="submit" disabled={saving === "periodStatus" || !canClosePeriod} className="rounded bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60 md:col-span-2">{saving === "periodStatus" ? l("Saving...", "Kaydediliyor...") : l("Update Status", "Durumu Guncelle")}</button>
           </form>
+
+          <div className="rounded border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+            {l(
+              "Direct period-status mutation is retired. Review readiness and workflow state here, then use the governed close-run action below.",
+              "Dogrudan donem-durumu mutasyonu kaldirildi. Hazirligi ve workflow durumunu burada inceleyin, sonra asagidaki yonetilen kapanis calismasini kullanin."
+            )}
+          </div>
 
           {periodCloseExplainabilityModel ? (
             <GovernedRuntimeExplainabilityPanel
@@ -3816,7 +3780,7 @@ export default function JournalWorkbenchPage() {
                   </div>
                 ))}
               </div>
-              <div className="mt-3 flex flex-wrap gap-2 text-xs font-semibold">
+            <div className="mt-3 flex flex-wrap gap-2 text-xs font-semibold">
                 <Link
                   className="rounded border border-cyan-300 bg-white px-2 py-1 text-cyan-800"
                   to="/app/kasa-kur-raporlari"
@@ -3989,7 +3953,7 @@ export default function JournalWorkbenchPage() {
               >
                 {saving === "periodCloseRun" ? l("Running...", "Calisiyor...") : l("Run Auto Close", "Otomatik Kapanisi Calistir")}
               </ActionButtonWithTooltip>
-              <button type="button" onClick={onLoadPeriodCloseRuns} disabled={saving === "periodCloseRuns" || !canClosePeriod} className="rounded border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 disabled:opacity-60">{saving === "periodCloseRuns" ? l("Loading...", "Yukleniyor...") : l("Load Close Runs", "Kapanis Calismalarini Yukle")}</button>
+              <button type="button" onClick={onLoadPeriodCloseRuns} disabled={saving === "periodCloseRuns" || !canViewPeriodClose} className="rounded border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 disabled:opacity-60">{saving === "periodCloseRuns" ? l("Loading...", "Yukleniyor...") : l("Load Close Runs", "Kapanis Calismalarini Yukle")}</button>
             </div>
             {periodCloseRunDisabledReason ? (
               <div className="md:col-span-2 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">

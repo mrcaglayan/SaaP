@@ -15,6 +15,7 @@ import {
   normalizeLocalReportParams,
 } from "../api/glReports.js";
 import { listFiscalPeriods, listLegalEntities } from "../api/orgAdmin.js";
+import { hasAnyPeriodCloseViewPermission } from "../auth/permissionAccess.js";
 import { useAuth } from "../auth/useAuth.js";
 import LocalCloseReportBanner from "../components/LocalCloseReportBanner.jsx";
 import { useI18n } from "../i18n/useI18n.js";
@@ -124,7 +125,7 @@ export default function TrialBalancePage() {
   const canReadBooks = hasPermission("gl.book.read");
   const canReadPeriods = hasPermission("org.fiscal_period.read");
   const canReadTrialBalance = hasPermission("gl.trial_balance.read");
-  const canReadPeriodClose = hasPermission("gl.period.close");
+  const canReadPeriodClose = hasAnyPeriodCloseViewPermission(hasPermission);
   const canReviewLocalClose = hasPermission("ouclose.prepare");
   const missingLegacyPermissions = REQUIRED_LEGACY_PERMISSIONS.filter(
     (permissionCode) => !hasPermission(permissionCode),
@@ -822,7 +823,10 @@ export default function TrialBalancePage() {
                     "Latest period-close run not found for this scope.",
                     "Bu kapsam icin son donem kapanisi bulunamadi.",
                   )
-                  : "gl.period.close"}
+                  : l(
+                    "Review, approval, execute, reopen, or period-admin authority required.",
+                    "Inceleme, onay, icra, yeniden acma veya donem yonetim yetkisi gerekir."
+                  )}
             </div>
           </div>
         </div>

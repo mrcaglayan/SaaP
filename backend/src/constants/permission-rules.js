@@ -1,12 +1,32 @@
 import { PERMISSION_GROUPS } from "./permission-groups.js";
+import {
+  PERIOD_CLOSE_ADMIN_PERMISSION_CODE,
+  PERIOD_CLOSE_APPROVE_PERMISSION_CODE,
+  PERIOD_CLOSE_EXECUTE_PERMISSION_CODE,
+  PERIOD_CLOSE_LEGACY_PERMISSION_CODE,
+  PERIOD_CLOSE_REOPEN_PERMISSION_CODE,
+} from "../../../shared/periodCloseGovernance.js";
+
+export const RETIRED_PERMISSION_CODES = Object.freeze([
+  PERIOD_CLOSE_LEGACY_PERMISSION_CODE,
+]);
 
 export const PERMISSION_DEPENDENCIES = Object.freeze({
   "gl.journal.post": Object.freeze(["gl.journal.read"]),
   "gl.journal.post_to_closed_period": Object.freeze(["gl.journal.post"]),
   "gl.journal.reverse": Object.freeze(["gl.journal.read"]),
-  "gl.period.close": Object.freeze(["gl.journal.read", "gl.trial_balance.read"]),
-  "gl.period.reopen": Object.freeze(["gl.journal.read", "gl.trial_balance.read", "gl.period.close"]),
-  "gl.period.admin": Object.freeze(["gl.journal.read", "gl.trial_balance.read", "gl.period.close"]),
+  [PERIOD_CLOSE_EXECUTE_PERMISSION_CODE]: Object.freeze([
+    "gl.journal.read",
+    "gl.trial_balance.read",
+  ]),
+  [PERIOD_CLOSE_REOPEN_PERMISSION_CODE]: Object.freeze([
+    "gl.journal.read",
+    "gl.trial_balance.read",
+  ]),
+  [PERIOD_CLOSE_ADMIN_PERMISSION_CODE]: Object.freeze([
+    "gl.journal.read",
+    "gl.trial_balance.read",
+  ]),
   "ouclose.approve": Object.freeze(["ouclose.read"]),
   "ouclose.lock": Object.freeze(["ouclose.read", "ouclose.approve"]),
   "bank.reconcile.write": Object.freeze(["bank.reconcile.read"]),
@@ -62,10 +82,22 @@ export const PERMISSION_CONFLICTS = Object.freeze([
     reason: "Review authority should stay distinct from counterparty request submission.",
   }),
   Object.freeze({
-    leftPermissionCode: "gl.period.close",
-    rightPermissionCode: "gl.period.reopen",
+    leftPermissionCode: "org.fiscal_period.read",
+    rightPermissionCode: PERIOD_CLOSE_APPROVE_PERMISSION_CODE,
     severity: "warn",
-    reason: "SoD: period close and reopen authority should be separated where practical.",
+    reason: "SoD: readiness review and period-close approval should stay separate where practical.",
+  }),
+  Object.freeze({
+    leftPermissionCode: PERIOD_CLOSE_APPROVE_PERMISSION_CODE,
+    rightPermissionCode: PERIOD_CLOSE_EXECUTE_PERMISSION_CODE,
+    severity: "warn",
+    reason: "SoD: workflow approval and period-close execution should stay separate where practical.",
+  }),
+  Object.freeze({
+    leftPermissionCode: PERIOD_CLOSE_EXECUTE_PERMISSION_CODE,
+    rightPermissionCode: PERIOD_CLOSE_REOPEN_PERMISSION_CODE,
+    severity: "warn",
+    reason: "SoD: period-close execution and reopen authority should be separated where practical.",
   }),
 ]);
 
@@ -119,6 +151,16 @@ function buildDependencyErrors(permissionCodeSet, subjectLabel) {
   }
 
   return errors;
+}
+
+function buildRetiredPermissionErrors(permissionCodeSet, subjectLabel) {
+  return RETIRED_PERMISSION_CODES.filter((permissionCode) =>
+    permissionCodeSet.has(permissionCode)
+  ).map((permissionCode) => ({
+    type: "retired_permission",
+    permissionCode,
+    message: `${subjectLabel} grants retired permission ${permissionCode}. Use ${PERIOD_CLOSE_APPROVE_PERMISSION_CODE} and/or ${PERIOD_CLOSE_EXECUTE_PERMISSION_CODE} instead.`,
+  }));
 }
 
 function buildConflictWarnings(permissionCodeSet, subjectLabel) {
@@ -188,6 +230,7 @@ export function evaluatePermissionRuleSet({
   return {
     normalizedPermissionCodes,
     errors: [
+      ...buildRetiredPermissionErrors(permissionCodeSet, subjectLabel),
       ...buildDependencyErrors(permissionCodeSet, subjectLabel),
       ...buildGlPostingGuardrailErrors(permissionCodeSet, capabilityGroupSet, subjectLabel),
     ],

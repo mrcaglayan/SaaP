@@ -39,6 +39,9 @@ const SHAREHOLDER_PURPOSE_CODE_SET = new Set(SHAREHOLDER_PURPOSE_CODES);
 const BOOTSTRAP_HANDOFF_PRESET_CODE_ALIASES = Object.freeze({
   CountryAPController: "CountryAPApprover",
 });
+const BOOTSTRAP_HANDOFF_CENTRAL_ONLY_ROLE_CODES = Object.freeze([
+  "PeriodCloseSupervisorAuthority",
+]);
 const BOOTSTRAP_HANDOFF_PRESET_DEFINITIONS = Object.freeze({
   EntityAPController: Object.freeze({
     code: "EntityAPController",
@@ -1141,6 +1144,26 @@ function buildBootstrapHandoffRoleCodes(definition, includeGlPostingAuthority = 
     }
   }
   return [...roleCodeSet];
+}
+
+/**
+ * Reject bootstrap presets that would expose centrally managed workflow roles
+ * through company-setup handoff bundles.
+ */
+function assertBootstrapHandoffPresetAllowsAssignment(definition) {
+  const blockedRoleCodes = buildBootstrapHandoffRoleCodes(definition, true).filter(
+    (roleCode) => BOOTSTRAP_HANDOFF_CENTRAL_ONLY_ROLE_CODES.includes(roleCode)
+  );
+  if (blockedRoleCodes.length === 0) {
+    return;
+  }
+  throw badRequest(
+    `${String(definition?.code || "<unknown>").trim()} includes centrally managed role codes that cannot be assigned through bootstrap handoff: ${blockedRoleCodes.join(", ")}`
+  );
+}
+
+for (const presetDefinition of Object.values(BOOTSTRAP_HANDOFF_PRESET_DEFINITIONS)) {
+  assertBootstrapHandoffPresetAllowsAssignment(presetDefinition);
 }
 
 function normalizeCompanyBootstrapHandoffAssignment(assignment, index) {
@@ -2701,6 +2724,7 @@ export const __testOnboardingInternals = {
   normalizeGroupCoaSelection,
   buildPolicyPackBootstrapApplyPlan,
   normalizeCompanyBootstrapCurrentAccountConfig,
+  assertBootstrapHandoffPresetAllowsAssignment,
   normalizeCompanyBootstrapHandoffAssignments,
   buildDraftOperatingUnitCurrentAccountEligibilityPreview,
 };

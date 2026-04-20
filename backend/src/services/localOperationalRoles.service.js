@@ -68,6 +68,17 @@ export const LOCAL_OPERATIONAL_ROLE_CATALOG = Object.freeze({
 export const LOCAL_OPERATIONAL_ROLE_CODES = Object.freeze(
   Object.keys(LOCAL_OPERATIONAL_ROLE_CATALOG),
 );
+export const LOCAL_OPERATIONAL_ROLE_CENTRAL_ONLY_CODES = Object.freeze([
+  "PeriodCloseSupervisorAuthority",
+]);
+
+function getLocalOperationalRoleRejectionMessage(roleCode) {
+  const normalizedRoleCode = String(roleCode || "").trim();
+  if (LOCAL_OPERATIONAL_ROLE_CENTRAL_ONLY_CODES.includes(normalizedRoleCode)) {
+    return `${normalizedRoleCode} is centrally managed and cannot be assigned through local user administration`;
+  }
+  return `${normalizedRoleCode} is not manageable through local user administration`;
+}
 
 /**
  * Return one bounded local-role config, or `null` when the role is not part of
@@ -87,9 +98,7 @@ export function normalizeLocalOperationalRoleCode(roleCode) {
     throw badRequest("roleCode is required");
   }
   if (!getLocalOperationalRoleConfig(normalizedRoleCode)) {
-    throw badRequest(
-      `${normalizedRoleCode} is not manageable through local user administration`,
-    );
+    throw badRequest(getLocalOperationalRoleRejectionMessage(normalizedRoleCode));
   }
   return normalizedRoleCode;
 }
@@ -115,6 +124,7 @@ export function normalizeLocalOperationalRoleScopeType(roleCode, scopeType) {
 export default {
   LOCAL_OPERATIONAL_ROLE_CATALOG,
   LOCAL_OPERATIONAL_ROLE_CODES,
+  LOCAL_OPERATIONAL_ROLE_CENTRAL_ONLY_CODES,
   getLocalOperationalRoleConfig,
   normalizeLocalOperationalRoleCode,
   normalizeLocalOperationalRoleScopeType,

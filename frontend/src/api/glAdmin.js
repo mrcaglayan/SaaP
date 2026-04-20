@@ -150,14 +150,6 @@ export async function getPreCloseReview(bookId, periodId) {
   return response.data;
 }
 
-export async function closePeriod(bookId, periodId, payload) {
-  const response = await api.post(
-    `/api/v1/gl/period-statuses/${bookId}/${periodId}/close`,
-    payload,
-  );
-  return response.data;
-}
-
 export async function runPeriodClose(bookId, periodId, payload = {}) {
   const response = await api.post(
     `/api/v1/gl/period-closing/${bookId}/${periodId}/close-run`,

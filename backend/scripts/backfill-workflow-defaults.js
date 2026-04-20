@@ -1,19 +1,24 @@
 import { closePool, query, withTransaction } from "../src/db.js";
 import { ensureUnifiedWorkflowPolicyForDefinition } from "../src/services/workflows.service.js";
+import {
+  PERIOD_CLOSE_APPROVE_PERMISSION_CODE,
+  PERIOD_CLOSE_READINESS_PERMISSION_CODE,
+} from "../../shared/periodCloseGovernance.js";
 
 const PROCESS_DEFAULTS = Object.freeze([
   {
     processType: "PERIOD_CLOSE",
     definitionCode: "WF_STD_PERIOD_CLOSE_V1",
     definitionName: "Standard Period Close Approval Chain",
-    requiredPermissionCode: "gl.period.close",
     steps: Object.freeze([
       Object.freeze({
         stageScopeType: "LEGAL_ENTITY",
+        requiredPermissionCode: PERIOD_CLOSE_READINESS_PERMISSION_CODE,
         escalationAfterHours: 24,
       }),
       Object.freeze({
-        stageScopeType: "GROUP",
+        stageScopeType: "LEGAL_ENTITY",
+        requiredPermissionCode: PERIOD_CLOSE_APPROVE_PERMISSION_CODE,
         escalationAfterHours: 48,
       }),
     ]),
@@ -244,6 +249,9 @@ async function upsertDefinitionAndStepsTx(tx, { tenantId, createdByUserId, confi
     stageScopeType: String(step?.stageScopeType || "")
       .trim()
       .toUpperCase(),
+    requiredPermissionCode: String(
+      step?.requiredPermissionCode || config.requiredPermissionCode || ""
+    ).trim(),
     escalationAfterHours: parsePositiveIntOrNull(step?.escalationAfterHours),
     minApproverCount: parsePositiveIntOrNull(step?.minApproverCount) || 1,
     allowSelfApprove: Boolean(step?.allowSelfApprove),
@@ -269,7 +277,7 @@ async function upsertDefinitionAndStepsTx(tx, { tenantId, createdByUserId, confi
         workflowDefinitionId,
         step.stepNo,
         step.stageScopeType,
-        config.requiredPermissionCode,
+        step.requiredPermissionCode,
         step.minApproverCount,
         step.allowSelfApprove ? 1 : 0,
         step.escalationAfterHours,
@@ -378,7 +386,9 @@ async function main() {
           tenantId,
           processType: config.processType,
           definitionCode: config.definitionCode,
-          requiredPermissionCode: config.requiredPermissionCode,
+          requiredPermissionCodes: (config.steps || [])
+            .map((step) => String(step?.requiredPermissionCode || config.requiredPermissionCode || "").trim())
+            .filter(Boolean),
           groupCompanyId: scopeGroupCompanyId,
           effectiveFrom: args.effectiveFrom,
           createdByUserId,

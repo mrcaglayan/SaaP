@@ -39,6 +39,27 @@ export default function ApprovalStepCard({
   const [isExpanded, setIsExpanded] = useState(false);
   const isAp = String(processType || "").toUpperCase() === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE;
   const selectedApActionCode = isAp ? String(step?.actionCode || "").trim().toUpperCase() : "";
+  const selectedAuthorityEntry = !isAp
+    ? workflowStepAuthorityOptions.find(
+        (authorityEntry) =>
+          String(authorityEntry?.code || "").trim() ===
+          String(step?.requiredAuthorityCode || "").trim()
+      ) || null
+    : null;
+  const allowedStepScopeTypes = Array.isArray(selectedAuthorityEntry?.allowedStepScopes)
+    ? selectedAuthorityEntry.allowedStepScopes
+        .map((scopeType) => String(scopeType || "").trim().toUpperCase())
+        .filter(Boolean)
+    : [];
+  const visibleStepScopeTypes =
+    !isAp && allowedStepScopeTypes.length > 0
+      ? Array.from(
+          new Set([
+            ...allowedStepScopeTypes,
+            String(step?.stageScopeType || "").trim().toUpperCase(),
+          ].filter(Boolean))
+        )
+      : stepScopeTypes;
   const blockingIssues = Array.isArray(validation?.blockingIssues) ? validation.blockingIssues : [];
   const warningIssues = Array.isArray(validation?.warningIssues) ? validation.warningIssues : [];
   const informationalIssues = warningIssues.filter(
@@ -155,7 +176,7 @@ export default function ApprovalStepCard({
               <SelectValue placeholder={l("Choose a level", "Seviye secin")} />
             </SelectTrigger>
             <SelectContent>
-              {stepScopeTypes.map((scopeType) => (
+              {visibleStepScopeTypes.map((scopeType) => (
                 <SelectItem key={scopeType} value={scopeType}>
                   {stepScopeLabels[scopeType] || scopeType}
                 </SelectItem>

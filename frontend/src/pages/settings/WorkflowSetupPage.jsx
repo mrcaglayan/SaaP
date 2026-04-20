@@ -66,6 +66,7 @@ import {
 } from "./workflows/utils/workflowSetupHelpers.js";
 import { getWorkflowSetupText } from "./workflows/utils/workflowSetupText.js";
 import { AP_DOCUMENT_WORKFLOW_PROCESS_TYPE } from "../../../../shared/cariDocumentWorkflowGovernance.js";
+import { PERIOD_CLOSE_APPROVE_PERMISSION_CODE } from "../../../../shared/periodCloseGovernance.js";
 
 const WORKFLOW_WORKBENCH_TABS = Object.freeze([
   "definitions",
@@ -1170,15 +1171,23 @@ export default function WorkflowSetupPage({ workspaceMode = "" }) {
       return;
     }
 
+    const defaultAuthority =
+      String(selectedProcessType || "").toUpperCase() === "PERIOD_CLOSE"
+        ? workflowStepAuthorityOptions.find(
+            (entry) =>
+              String(entry?.code || "").trim().toUpperCase() === "PERIOD_CLOSE_APPROVAL" ||
+              String(entry?.primaryPermissionCode || "").trim() === PERIOD_CLOSE_APPROVE_PERMISSION_CODE
+          ) || workflowStepAuthorityOptions[0] || null
+        : workflowStepAuthorityOptions[0] || null;
+
     applyStepDrafts(
       [
         ...stepDrafts,
         normalizeStepDraft(
           {
-            requiredAuthorityCode: workflowStepAuthorityOptions[0]?.code || "",
-            requiredAuthorityLabel: workflowStepAuthorityOptions[0]?.displayName || "",
-            requiredPermissionCode:
-              workflowStepAuthorityOptions[0]?.primaryPermissionCode || "",
+            requiredAuthorityCode: defaultAuthority?.code || "",
+            requiredAuthorityLabel: defaultAuthority?.displayName || "",
+            requiredPermissionCode: defaultAuthority?.primaryPermissionCode || "",
           },
           (Array.isArray(stepDrafts) ? stepDrafts.length : 0) + 1,
           selectedProcessType,

@@ -42,14 +42,21 @@
         {
           "stepNo": 1,
           "stageScopeType": "LEGAL_ENTITY",
-          "requiredPermissionCode": "gl.period.close",
+          "requiredPermissionCode": "org.fiscal_period.read",
           "minApproverCount": 1,
           "allowSelfApprove": false
         },
         {
           "stepNo": 2,
+          "stageScopeType": "LEGAL_ENTITY",
+          "requiredPermissionCode": "gl.period.close.approve",
+          "minApproverCount": 1,
+          "allowSelfApprove": false
+        },
+        {
+          "stepNo": 3,
           "stageScopeType": "GROUP",
-          "requiredPermissionCode": "gl.period.close",
+          "requiredPermissionCode": "gl.period.close.approve",
           "minApproverCount": 1,
           "allowSelfApprove": false
         }
@@ -138,14 +145,21 @@
       {
         "stepNo": 1,
         "stageScopeType": "LEGAL_ENTITY",
-        "requiredPermissionCode": "gl.period.close",
+        "requiredPermissionCode": "org.fiscal_period.read",
         "minApproverCount": 1,
         "allowSelfApprove": false
       },
       {
         "stepNo": 2,
+        "stageScopeType": "LEGAL_ENTITY",
+        "requiredPermissionCode": "gl.period.close.approve",
+        "minApproverCount": 1,
+        "allowSelfApprove": false
+      },
+      {
+        "stepNo": 3,
         "stageScopeType": "GROUP",
-        "requiredPermissionCode": "gl.period.close",
+        "requiredPermissionCode": "gl.period.close.approve",
         "minApproverCount": 1,
         "allowSelfApprove": false
       }

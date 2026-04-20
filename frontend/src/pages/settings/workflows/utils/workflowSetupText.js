@@ -73,10 +73,16 @@ export function getWorkflowSetupText(l) {
           active: "border-emerald-500 bg-emerald-50 ring-2 ring-emerald-200",
         },
         recommended: {
-          level: l("OU -> Legal Entity -> Group", "OU -> Legal Entity -> Grup"),
+          level: l(
+            "Legal Entity readiness -> Legal Entity approval",
+            "Legal Entity hazirlik -> Legal Entity onayi"
+          ),
           minApprovers: "1",
           selfApproval: l("Not allowed", "Izin verilmez"),
-          permissionCode: "gl.period.close",
+          permissionCode: l(
+            "org.fiscal_period.read + gl.period.close.approve",
+            "org.fiscal_period.read + gl.period.close.approve"
+          ),
         },
       },
       CONSOLIDATION_RUN: {
@@ -171,12 +177,12 @@ export function getWorkflowSetupText(l) {
         title: l("Recommended for period close", "Donem kapanisi icin onerilen"),
         points: [
           l(
-            "Use 3 steps: Operating Unit, Legal Entity, Group.",
-            "3 adim kullanin: Operating Unit, Legal Entity, Grup."
+            "Start with Legal Entity readiness review, then Legal Entity approval. Add Group only when you need supervisory approval before execution.",
+            "Legal Entity hazirlik incelemesi ile baslayin, sonra Legal Entity onayi ekleyin. Grubu yalnizca icra oncesi gozetimsel onay gerekiyorsa ekleyin."
           ),
           l(
-            'Use reviewer permission "gl.period.close".',
-            '"gl.period.close" inceleyen yetkisini kullanin.'
+            'Use "org.fiscal_period.read" for readiness and "gl.period.close.approve" for workflow approval. Runtime execution stays outside the workflow step list.',
+            'Hazirlik icin "org.fiscal_period.read", workflow onayi icin "gl.period.close.approve" kullanin. Calisma zamanindaki icra workflow adim listesinin disinda kalir.'
           ),
         ],
       },

@@ -26,6 +26,18 @@ import {
   listApWorkflowSteps,
   resolveApWorkflowEditableStep,
 } from "../../../shared/cariDocumentWorkflowGovernance.js";
+import {
+  PERIOD_CLOSE_APPROVE_PERMISSION_CODE,
+  PERIOD_CLOSE_WORKFLOW_ALLOWED_PERMISSION_CODES,
+  PERIOD_CLOSE_WORKFLOW_PROCESS_TYPE,
+  isPeriodClosePermissionScopeAllowed,
+  isPeriodCloseWorkflowStepPermissionCodeAllowed,
+  periodCloseWorkflowHasApprovalStep,
+} from "../../../shared/periodCloseGovernance.js";
+import {
+  getWorkflowStepAllowedScopeTypes,
+  isWorkflowStepScopeAllowed,
+} from "../../../shared/workflowStepScopeGovernance.js";
 
 const FEATURE_WORKFLOW_CLOSE_CONSOLIDATION_V1 =
   "FEATURE_WORKFLOW_CLOSE_CONSOLIDATION_V1";
@@ -598,6 +610,55 @@ function assertApWorkflowDefinitionSteps(steps) {
   }
 }
 
+function assertPeriodCloseWorkflowDefinitionSteps(steps) {
+  let previousStepNo = 0;
+
+  for (let index = 0; index < steps.length; index += 1) {
+    const step = steps[index];
+    const stepNo = Number(step.stepNo || 0);
+    if (!Number.isInteger(stepNo) || stepNo <= previousStepNo) {
+      throw badRequest(
+        `steps[${index}].stepNo must be greater than the previous PERIOD_CLOSE step number`
+      );
+    }
+    previousStepNo = stepNo;
+
+    if (!step.requiredPermissionCode) {
+      throw badRequest(`steps[${index}].requiredPermissionCode is required`);
+    }
+    if (step.actionCode) {
+      throw badRequest(
+        `steps[${index}].actionCode is not supported for ${PERIOD_CLOSE_WORKFLOW_PROCESS_TYPE}`
+      );
+    }
+    if (
+      !isPeriodCloseWorkflowStepPermissionCodeAllowed(step.requiredPermissionCode)
+    ) {
+      throw badRequest(
+        `steps[${index}].requiredPermissionCode must be one of ${PERIOD_CLOSE_WORKFLOW_ALLOWED_PERMISSION_CODES.join(", ")} for ${PERIOD_CLOSE_WORKFLOW_PROCESS_TYPE}`
+      );
+    }
+    if (
+      !isPeriodClosePermissionScopeAllowed(
+        step.requiredPermissionCode,
+        step.stageScopeType
+      )
+    ) {
+      throw badRequest(
+        `steps[${index}].stageScopeType ${step.stageScopeType} is not allowed for ${step.requiredPermissionCode}`
+      );
+    }
+  }
+
+  // PERIOD_CLOSE runtime execution must always depend on at least one
+  // workflow approval step, so readiness-only definitions are invalid.
+  if (!periodCloseWorkflowHasApprovalStep(steps)) {
+    throw badRequest(
+      `PERIOD_CLOSE workflows must contain at least one ${PERIOD_CLOSE_APPROVE_PERMISSION_CODE} step`
+    );
+  }
+}
+
 function normalizeWorkflowDefinitionStepsForProcessType(processType, steps = []) {
   const normalizedProcessType = toUpper(processType);
   const normalizedSteps = steps.map((step) =>
@@ -613,6 +674,11 @@ function normalizeWorkflowDefinitionStepsForProcessType(processType, steps = [])
     return normalizedApSteps;
   }
 
+  if (normalizedProcessType === PERIOD_CLOSE_WORKFLOW_PROCESS_TYPE) {
+    assertPeriodCloseWorkflowDefinitionSteps(normalizedSteps);
+    return normalizedSteps;
+  }
+
   normalizedSteps.forEach((step, index) => {
     if (!step.requiredPermissionCode) {
       throw badRequest(`steps[${index}].requiredPermissionCode is required`);
@@ -620,6 +686,20 @@ function normalizeWorkflowDefinitionStepsForProcessType(processType, steps = [])
     if (step.actionCode) {
       throw badRequest(
         `steps[${index}].actionCode is only supported for AP_DOCUMENT_POSTING`
+      );
+    }
+    const allowedScopeTypes = getWorkflowStepAllowedScopeTypes(
+      step.requiredPermissionCode
+    );
+    if (
+      allowedScopeTypes.length > 0 &&
+      !isWorkflowStepScopeAllowed(
+        step.requiredPermissionCode,
+        step.stageScopeType
+      )
+    ) {
+      throw badRequest(
+        `steps[${index}].stageScopeType ${step.stageScopeType} is not allowed for ${step.requiredPermissionCode}`
       );
     }
   });
@@ -1800,6 +1880,7 @@ function makeWorkflowGateResult({
   processType = "",
   targetType = "",
   targetId = null,
+  currentStepAccess = null,
 }) {
   return {
     enabled: Boolean(enabled),
@@ -1831,6 +1912,11 @@ function makeWorkflowGateResult({
       : null,
     routing,
     instance: mapWorkflowGateInstanceRow(instanceRow),
+    currentStepNo: Number(currentStepAccess?.stepNo || 0),
+    stageScopeType: toUpper(currentStepAccess?.stageScopeType),
+    requiredPermissionCode: normalizeWorkflowStepPermissionCode(
+      currentStepAccess?.requiredPermissionCode || null
+    ),
   };
 }
 
@@ -3397,6 +3483,22 @@ export async function evaluateWorkflowApprovalGate({
   }
 
   const instanceStatus = toUpper(instanceRow?.status);
+  let currentStepAccess = null;
+  if (instanceStatus === "PENDING" && parsePositiveInt(instanceRow?.generic_request_id)) {
+    try {
+      const requestRow = await getUnifiedWorkflowRequestRowById({
+        tenantId: normalizedTenantId,
+        requestId: parsePositiveInt(instanceRow.generic_request_id),
+        runQuery,
+      });
+      if (requestRow) {
+        // Explainability metadata should enrich the gate, not become a new blocker.
+        currentStepAccess = resolveUnifiedWorkflowDecisionAccessFromRequestRow(requestRow);
+      }
+    } catch (err) {
+      currentStepAccess = null;
+    }
+  }
   if (instanceStatus === "APPROVED") {
     return makeWorkflowGateResult({
       enabled: true,
@@ -3408,6 +3510,7 @@ export async function evaluateWorkflowApprovalGate({
       processType: normalizedProcessType,
       targetType: normalizedTargetType,
       targetId: normalizedTargetId,
+      currentStepAccess,
     });
   }
   if (instanceStatus === "REJECTED") {
@@ -3423,6 +3526,7 @@ export async function evaluateWorkflowApprovalGate({
       processType: normalizedProcessType,
       targetType: normalizedTargetType,
       targetId: normalizedTargetId,
+      currentStepAccess,
     });
   }
 
@@ -3438,6 +3542,7 @@ export async function evaluateWorkflowApprovalGate({
     processType: normalizedProcessType,
     targetType: normalizedTargetType,
     targetId: normalizedTargetId,
+    currentStepAccess,
   });
 }
 

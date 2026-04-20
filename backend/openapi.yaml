@@ -2840,68 +2840,6 @@
         }
       }
     },
-    "/api/v1/gl/period-statuses/{bookId}/{periodId}/close": {
-      "post": {
-        "tags": [
-          "GL"
-        ],
-        "operationId": "closePeriod",
-        "summary": "Set period close status",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "bookId",
-            "required": true,
-            "description": "Book identifier",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          {
-            "in": "path",
-            "name": "periodId",
-            "required": true,
-            "description": "Fiscal period identifier",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PeriodCloseInput"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Period status updated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PeriodCloseResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        }
-      }
-    },
     "/api/v1/fx/rates/bulk-upsert": {
       "post": {
         "tags": [

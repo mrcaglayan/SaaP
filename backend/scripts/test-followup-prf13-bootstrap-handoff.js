@@ -7,6 +7,7 @@ import {
   startServerProcess,
   waitForServer,
 } from "./ex05-test-helpers.js";
+import { __testOnboardingInternals } from "../src/routes/onboarding.js";
 
 const PORT = Number(process.env.PRF13_BOOTSTRAP_HANDOFF_TEST_PORT || 3146);
 const BASE_URL =
@@ -74,6 +75,25 @@ async function main() {
   const server = startServerProcess({ port: PORT });
   let serverStopped = false;
 
+  let blockedPresetError = null;
+  try {
+    __testOnboardingInternals.assertBootstrapHandoffPresetAllowsAssignment({
+      code: "InvalidPeriodCloseSupervisorPreset",
+      roleCodes: ["PeriodCloseSupervisorAuthority"],
+      optionalRoleCodes: [],
+    });
+  } catch (error) {
+    blockedPresetError = error;
+  }
+  assert(
+    blockedPresetError &&
+      String(blockedPresetError.message || "").includes("centrally managed") &&
+      String(blockedPresetError.message || "").includes(
+        "PeriodCloseSupervisorAuthority"
+      ),
+    "Bootstrap handoff internals should reject centrally managed PeriodCloseSupervisorAuthority presets"
+  );
+
   try {
     await waitForServer({ baseUrl: BASE_URL });
     const token = await login({
@@ -103,9 +123,16 @@ async function main() {
     const handoffUsers = Array.isArray(handoffOptionsResponse.json?.users)
       ? handoffOptionsResponse.json.users
       : [];
+    const handoffPresetRoleCodes = Array.isArray(handoffOptionsResponse.json?.presets)
+      ? handoffOptionsResponse.json.presets.flatMap((preset) => preset.roleCodes || [])
+      : [];
     assert(
       handoffUsers.some((user) => Number(user.id) === existingUserId),
       "Bootstrap handoff options should list the existing active tenant user"
+    );
+    assert(
+      !handoffPresetRoleCodes.includes("PeriodCloseSupervisorAuthority"),
+      "Bootstrap handoff presets should not expose centrally managed PeriodCloseSupervisorAuthority"
     );
 
     const legalEntityCode = `LE${String(stamp).slice(-6)}`;

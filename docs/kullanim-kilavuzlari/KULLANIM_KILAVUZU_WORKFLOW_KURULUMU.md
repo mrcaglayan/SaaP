@@ -118,12 +118,13 @@ Asagidaki alanlar adim davranisini belirler:
 
 2. `stageScopeType`
 - Bu adimin onay scope seviyesi.
-- Degerler: `OPERATING_UNIT`, `LEGAL_ENTITY`, `GROUP`
+- Degerler: `OPERATING_UNIT`, `LEGAL_ENTITY`, `COUNTRY`, `GROUP`
 
 3. `requiredPermissionCode`
 - Onay verecek kullanicida bulunmasi gereken permission.
 - Ornek:
-  - `gl.period.close`
+  - `org.fiscal_period.read`
+  - `gl.period.close.approve`
   - `consolidation.run.finalize`
 
 4. `minApproverCount`
@@ -164,7 +165,7 @@ Secim onceligi (eslesme sirasi):
 4. Tenant fallback
 
 Kritik not:
-1. `PERIOD_CLOSE` ve `CONSOLIDATION_RUN` hedeflerinde pratikte `LEGAL_ENTITY`/`GROUP`/`TENANT` daha guvenli tercihtir.
+1. `PERIOD_CLOSE` hedeflerinde pratikte `COUNTRY`/`LEGAL_ENTITY`/`GROUP`/`TENANT`; `CONSOLIDATION_RUN` hedeflerinde ise `GROUP`/`TENANT` daha guvenli tercihtir.
 2. Sadece OU tabanli kurulum, bu iki surecte "assignment bulunamadi" veya adim scope cozulemedi sorunlari dogurabilir.
 
 ---
@@ -234,14 +235,14 @@ Kontrol:
   {
     "stepNo": 1,
     "stageScopeType": "LEGAL_ENTITY",
-    "requiredPermissionCode": "gl.period.close",
+    "requiredPermissionCode": "org.fiscal_period.read",
     "minApproverCount": 1,
     "allowSelfApprove": false
   },
   {
     "stepNo": 2,
-    "stageScopeType": "GROUP",
-    "requiredPermissionCode": "gl.period.close",
+    "stageScopeType": "LEGAL_ENTITY",
+    "requiredPermissionCode": "gl.period.close.approve",
     "minApproverCount": 1,
     "allowSelfApprove": false
   }
@@ -249,9 +250,10 @@ Kontrol:
 ```
 
 Ne olur:
-1. LE duzeyi onay tamamlanmadan grup adimina gecmez.
-2. Grup onayi da tamamlaninca instance `APPROVED` olur.
-3. Bundan sonra close-run finalize edilebilir.
+1. Legal Entity hazirlik incelemesi tamamlanir.
+2. Legal Entity onayi tamamlaninca instance `APPROVED` olur.
+3. Bundan sonra close-run icin ayrica `gl.period.close.execute` yetkisi gerekir.
+4. Gozetimsel onay gerekiyorsa ucuncu adim olarak `GROUP` + `gl.period.close.approve` ekleyin.
 
 ## 8.2 Consolidation Run Icin Onerilen Baslangic
 

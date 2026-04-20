@@ -83,21 +83,36 @@ async function main() {
   });
 
   assert(
-    model?.requiredPackageLabel === "Period Close / Approve & Close" &&
+    model?.requiredAuthorityLabel === "Approve period close" &&
       model?.requiredScopeLabel === "Legal Entity" &&
       model?.badgeLabel === "Close approval pending",
-    "Period-close explainability should expose close package and legal-entity scope"
+    "Period-close explainability should expose approval authority and legal-entity scope"
   );
   assert(
     model?.userCapabilityLines?.includes(
-      "You have close authority, but workflow approval is still pending for this period close run."
+      "Workflow approval is still pending for Approve period close at Legal Entity scope."
     ),
-    "Period-close explainability should distinguish close authority from a pending workflow gate"
+    "Period-close explainability should distinguish pending approval from execution authority"
   );
   assert(
     model?.historyItems?.[0]?.summary ===
       "Run #18 | IN_PROGRESS | Soft close | 2026-04-08T09:20:00Z",
     "Period-close explainability should summarize recent run history in business-readable form"
+  );
+  assert(
+    model?.noteItems?.some(
+      (item) =>
+        item?.label === "Readiness vs close" &&
+        String(item?.value || "").includes("gl.period.close.approve") &&
+        String(item?.value || "").includes("gl.period.close.execute")
+    ),
+    "Period-close explainability should describe approval and execution as separate permissions"
+  );
+  assert(
+    model?.technicalItems?.some(
+      (item) => item?.label === "Workflow instance" && item?.value === "91"
+    ),
+    "Period-close explainability should surface workflow technical context"
   );
 
   assert(

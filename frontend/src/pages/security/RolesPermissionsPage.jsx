@@ -19,9 +19,9 @@ const ROLE_MEANING_FILTERS = Object.freeze([
   }),
   Object.freeze({
     key: FILTER_PACKAGE_BACKED,
-    label: "Managed authority roles",
+    label: "Package-backed roles",
     description:
-      "Managed runtime roles aligned to workflow-package definitions.",
+      "Package-backed runtime roles aligned to workflow-package definitions.",
   }),
 ]);
 
@@ -224,7 +224,7 @@ export default function RolesPermissionsPage() {
         <div className="grid gap-0 md:grid-cols-3">
           <PageMetric label={l("Managed roles", "Yonetilen roller")} value={roles.length} />
           <PageMetric
-            label={l("Managed authority roles", "Paket destekli roller")}
+            label={l("Package-backed roles", "Paket destekli roller")}
             value={packageBackedRoleCount}
           />
           <PageMetric

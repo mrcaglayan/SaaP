@@ -20,6 +20,17 @@ import {
   CARI_DOCUMENT_WORKFLOW_TARGET_TYPE,
   getApWorkflowRequiredPermissionCode,
 } from "../../../shared/cariDocumentWorkflowGovernance.js";
+import {
+  PERIOD_CLOSE_APPROVE_PERMISSION_CODE,
+  PERIOD_CLOSE_WORKFLOW_ALLOWED_PERMISSION_CODES,
+  PERIOD_CLOSE_WORKFLOW_PROCESS_TYPE,
+  isPeriodCloseWorkflowStepPermissionCodeAllowed,
+  periodCloseWorkflowHasApprovalStep,
+} from "../../../shared/periodCloseGovernance.js";
+import {
+  getWorkflowStepAllowedScopeTypes,
+  isWorkflowStepScopeAllowed,
+} from "../../../shared/workflowStepScopeGovernance.js";
 
 const PROCESS_TYPES = [
   "PERIOD_CLOSE",
@@ -187,7 +198,7 @@ function parseWorkflowCoverageDiagnosticSteps(steps, processType) {
 
   const normalizedProcessType = String(processType || "").toUpperCase();
   const seenStepNos = new Set();
-  return steps.map((rawStep, index) => {
+  const parsedSteps = steps.map((rawStep, index) => {
     const step = rawStep || {};
     const resolvedStepNo =
       step.stepNo ?? step.step_no ?? (Number.isInteger(index + 1) ? index + 1 : null);
@@ -231,15 +242,35 @@ function parseWorkflowCoverageDiagnosticSteps(steps, processType) {
         `steps[${index}].requiredPermissionCode must be ${getApWorkflowRequiredPermissionCode(actionCode)} for action ${actionCode}`
       );
     }
+    if (
+      normalizedProcessType === PERIOD_CLOSE_WORKFLOW_PROCESS_TYPE &&
+      !isPeriodCloseWorkflowStepPermissionCodeAllowed(requiredPermissionCode)
+    ) {
+      throw badRequest(
+        `steps[${index}].requiredPermissionCode must be one of ${PERIOD_CLOSE_WORKFLOW_ALLOWED_PERMISSION_CODES.join(", ")} for PERIOD_CLOSE`
+      );
+    }
+
+    const stageScopeType = normalizeEnum(
+      step.stageScopeType ?? step.stage_scope_type,
+      `steps[${index}].stageScopeType`,
+      STAGE_SCOPE_TYPES
+    );
+    const allowedScopeTypes = getWorkflowStepAllowedScopeTypes(requiredPermissionCode);
+    if (
+      normalizedProcessType !== PERIOD_CLOSE_WORKFLOW_PROCESS_TYPE &&
+      allowedScopeTypes.length > 0 &&
+      !isWorkflowStepScopeAllowed(requiredPermissionCode, stageScopeType)
+    ) {
+      throw badRequest(
+        `steps[${index}].stageScopeType ${stageScopeType} is not allowed for ${requiredPermissionCode}`
+      );
+    }
 
     return {
       stepNo,
       actionCode,
-      stageScopeType: normalizeEnum(
-        step.stageScopeType ?? step.stage_scope_type,
-        `steps[${index}].stageScopeType`,
-        STAGE_SCOPE_TYPES
-      ),
+      stageScopeType,
       requiredPermissionCode:
         normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
           ? requiredPermissionCode
@@ -254,6 +285,17 @@ function parseWorkflowCoverageDiagnosticSteps(steps, processType) {
             ),
     };
   });
+
+  if (
+    normalizedProcessType === PERIOD_CLOSE_WORKFLOW_PROCESS_TYPE &&
+    !periodCloseWorkflowHasApprovalStep(parsedSteps)
+  ) {
+    throw badRequest(
+      `PERIOD_CLOSE workflows must contain at least one ${PERIOD_CLOSE_APPROVE_PERMISSION_CODE} step`
+    );
+  }
+
+  return parsedSteps;
 }
 
 export function parseWorkflowDefinitionIdParam(req) {

@@ -214,6 +214,22 @@ function buildScopeOptions(scopeType, lookups, tenantScopeId) {
   }
   return [];
 }
+
+function resolvePreferredScopeId(scopeType, requestedScopeId, lookups, tenantScopeId) {
+  const normalizedScopeType = normalizeText(scopeType).toUpperCase();
+  const scopeOptions = buildScopeOptions(normalizedScopeType, lookups, tenantScopeId);
+  if (normalizedScopeType === "TENANT") {
+    return String(tenantScopeId || scopeOptions[0]?.id || "");
+  }
+  const normalizedRequestedScopeId = Number(requestedScopeId || 0);
+  if (
+    normalizedRequestedScopeId > 0 &&
+    scopeOptions.some((option) => Number(option.id) === normalizedRequestedScopeId)
+  ) {
+    return String(normalizedRequestedScopeId);
+  }
+  return String(scopeOptions[0]?.id || "");
+}
 function buildTemplateRoleCodes(presetCode, includeOptionalRoles = false) {
   const preset = getBootstrapHandoffPresetEntry(presetCode);
   const requiredRoleCodes = Array.isArray(preset.assignmentRoleCodes)
@@ -1901,6 +1917,9 @@ export default function UserAssignmentsPage() {
   const [selectedWorkbenchAuditLoading, setSelectedWorkbenchAuditLoading] = useState(false);
   const [selectedWorkbenchAuditError, setSelectedWorkbenchAuditError] = useState("");
   const [lastInviteLink, setLastInviteLink] = useState("");
+  // Keep the modal's current invite link separate so a new invite session
+  // cannot display a stale link from the previous user.
+  const [userModalInviteLink, setUserModalInviteLink] = useState("");
   const [userFilters, setUserFilters] = useState({
     search: "",
     status: "ALL",
@@ -2423,28 +2442,51 @@ export default function UserAssignmentsPage() {
   }, [userModalOpen, userModalScopeOptions]);
   useEffect(() => {
     setUserModalVisibilityDraft((prev) => {
-      if (!userModalOpen) {
+      if (!userModalOpen || userModalMode !== "invite" || !userModalPreset?.scopeType) {
         return prev;
       }
-      if (prev.scopeType === "TENANT") {
-        const nextScopeId = String(tenantScopeId || "");
-        return prev.scopeId === nextScopeId ? prev : { ...prev, scopeId: nextScopeId };
-      }
-      const currentScopeId = Number(prev.scopeId || 0);
+      const recommendedScopeType =
+        normalizeText(userModalPreset.scopeType).toUpperCase() || "LEGAL_ENTITY";
+      const recommendedScopeId = resolvePreferredScopeId(
+        recommendedScopeType,
+        userModalForm.scopeId,
+        lookups,
+        tenantScopeId
+      );
       if (
-        currentScopeId &&
-        userModalVisibilityDraftScopeOptions.some(
-          (option) => Number(option.id) === currentScopeId
-        )
+        prev.scopeType === recommendedScopeType &&
+        prev.scopeId === recommendedScopeId
       ) {
         return prev;
       }
       return {
         ...prev,
-        scopeId: String(userModalVisibilityDraftScopeOptions[0]?.id || ""),
+        scopeType: recommendedScopeType,
+        scopeId: recommendedScopeId,
       };
     });
-  }, [tenantScopeId, userModalOpen, userModalVisibilityDraftScopeOptions]);
+  }, [
+    lookups,
+    tenantScopeId,
+    userModalForm.scopeId,
+    userModalMode,
+    userModalOpen,
+    userModalPreset?.scopeType,
+  ]);
+  useEffect(() => {
+    setUserModalVisibilityDraft((prev) => {
+      if (!userModalOpen) {
+        return prev;
+      }
+      const nextScopeId = resolvePreferredScopeId(
+        prev.scopeType,
+        prev.scopeId,
+        lookups,
+        tenantScopeId
+      );
+      return prev.scopeId === nextScopeId ? prev : { ...prev, scopeId: nextScopeId };
+    });
+  }, [lookups, tenantScopeId, userModalOpen, userModalVisibilityDraftScopeOptions]);
   useEffect(() => {
     setRawAssignmentForm((prev) => {
       const currentScopeId = Number(prev.scopeId || 0);
@@ -2551,15 +2593,16 @@ export default function UserAssignmentsPage() {
   useEffect(() => {
     loadData();
   }, [loadData]);
-  function createUserModalVisibilityDraft(scopeType = "LEGAL_ENTITY") {
+  function createUserModalVisibilityDraft(scopeType = "LEGAL_ENTITY", preferredScopeId = "") {
     const normalizedScopeType = normalizeText(scopeType).toUpperCase() || "LEGAL_ENTITY";
-    const scopeOptions = buildScopeOptions(normalizedScopeType, lookups, tenantScopeId);
     return {
       scopeType: normalizedScopeType,
-      scopeId:
-        normalizedScopeType === "TENANT"
-          ? String(tenantScopeId || scopeOptions[0]?.id || "")
-          : String(scopeOptions[0]?.id || ""),
+      scopeId: resolvePreferredScopeId(
+        normalizedScopeType,
+        preferredScopeId,
+        lookups,
+        tenantScopeId
+      ),
       effect: "ALLOW",
     };
   }
@@ -2577,6 +2620,7 @@ export default function UserAssignmentsPage() {
       effectiveTo: "",
       includePostingAuthority: false,
     });
+    setUserModalInviteLink("");
     setUserModalVisibilityRules([]);
     setUserModalVisibilityDraft(createUserModalVisibilityDraft());
     setUserModalOpen(true);
@@ -2597,9 +2641,14 @@ export default function UserAssignmentsPage() {
       effectiveTo: firstBundle?.effectiveTo || "",
       includePostingAuthority: Boolean(firstBundle?.optionalRoleCodes?.includes("GLPostingAuthority")),
     });
+    setUserModalInviteLink("");
     setUserModalVisibilityRules([]);
     setUserModalVisibilityDraft(createUserModalVisibilityDraft());
     setUserModalOpen(true);
+  }
+  function closeUserModal() {
+    setUserModalInviteLink("");
+    setUserModalOpen(false);
   }
   function updateUserModalField(field, value) {
     setUserModalForm((prev) => {
@@ -2621,18 +2670,15 @@ export default function UserAssignmentsPage() {
       if (field === "scopeType") {
         const normalizedScopeType =
           normalizeText(value).toUpperCase() || "LEGAL_ENTITY";
-        const scopeOptions = buildScopeOptions(
-          normalizedScopeType,
-          lookups,
-          tenantScopeId
-        );
         return {
           ...prev,
           scopeType: normalizedScopeType,
-          scopeId:
-            normalizedScopeType === "TENANT"
-              ? String(tenantScopeId || scopeOptions[0]?.id || "")
-              : String(scopeOptions[0]?.id || ""),
+          scopeId: resolvePreferredScopeId(
+            normalizedScopeType,
+            "",
+            lookups,
+            tenantScopeId
+          ),
         };
       }
       return { ...prev, [field]: value };
@@ -2901,6 +2947,7 @@ export default function UserAssignmentsPage() {
         targetUserId = Number(inviteResponse?.invite?.userId || 0);
         inviteUrl = normalizeText(inviteResponse?.invite?.inviteUrl);
         setLastInviteLink(inviteUrl);
+        setUserModalInviteLink(inviteUrl);
       }
       if (!targetUserId) {
         throw new Error(
@@ -2942,11 +2989,12 @@ export default function UserAssignmentsPage() {
               : l("Invite created.", "Davet olusturuldu.")
           : l("Access template applied.", "Erisim template'i uygulandi.")
       );
-      setUserModalOpen(false);
+      closeUserModal();
       await loadData({ showLoadingState: false });
     } catch (requestError) {
       if (inviteUrl) {
         setLastInviteLink(inviteUrl);
+        setUserModalInviteLink(inviteUrl);
       }
       setError(
         getErrorMessage(
@@ -4224,14 +4272,14 @@ export default function UserAssignmentsPage() {
         mode={userModalMode}
         form={userModalForm}
         onChange={updateUserModalField}
-        onClose={() => setUserModalOpen(false)}
+        onClose={closeUserModal}
         onSubmit={handleSaveUserModal}
         saving={saving}
         l={l}
         permissionAccess={userModalAccess}
         modalScopeOptions={userModalScopeOptions}
         missingRoleCodes={userModalMissingRoleCodes}
-        inviteLink={lastInviteLink}
+        inviteLink={userModalInviteLink}
         visibilityRules={userModalVisibilityRules}
         visibilityDraft={userModalVisibilityDraft}
         visibilityDraftScopeOptions={userModalVisibilityDraftScopeOptions}

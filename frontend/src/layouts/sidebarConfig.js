@@ -1,4 +1,5 @@
 import { LOCAL_REPORT_SIDEBAR_ITEMS } from "../reporting/localReportConfig.js";
+import { PERIOD_CLOSE_VIEW_PERMISSION_CODES } from "../../../shared/periodCloseGovernance.js";
 
 const ROLE_PERMISSIONS_PAGE_PERMISSIONS = [
   "security.role.read",
@@ -621,7 +622,7 @@ const JOURNAL_PAGE_PERMISSIONS = [
   "gl.journal.post",
   "gl.journal.reverse",
   "gl.trial_balance.read",
-  "gl.period.close",
+  ...PERIOD_CLOSE_VIEW_PERMISSION_CODES,
 ];
 const INTERCOMPANY_RECONCILIATION_PAGE_PERMISSIONS = [
   "intercompany.reconcile.run",

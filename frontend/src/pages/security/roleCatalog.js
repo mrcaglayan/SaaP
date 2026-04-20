@@ -1,4 +1,14 @@
 
+import {
+  PERIOD_CLOSE_ADMIN_PERMISSION_CODE,
+  PERIOD_CLOSE_APPROVE_PERMISSION_CODE,
+  PERIOD_CLOSE_CLOSED_POST_PERMISSION_CODE,
+  PERIOD_CLOSE_EXECUTE_PERMISSION_CODE,
+  PERIOD_CLOSE_READINESS_PERMISSION_CODE,
+  PERIOD_CLOSE_REOPEN_PERMISSION_CODE,
+} from "../../../../shared/periodCloseGovernance.js";
+import { getWorkflowStepAllowedScopeTypes } from "../../../../shared/workflowStepScopeGovernance.js";
+
 function freezeList(values) {
   return Object.freeze(values);
 }
@@ -10,6 +20,7 @@ function freezeAuthority(authority) {
     ...authority,
     requiredPermissionCodes: freezeList(authority?.requiredPermissionCodes || []),
     anyPermissionCodes: freezeList(authority?.anyPermissionCodes || []),
+    allowedStepScopes: freezeList(authority?.allowedStepScopes || []),
   });
 }
 const CATEGORY_LABELS = Object.freeze({
@@ -107,6 +118,7 @@ const WORKFLOW_AUTHORITY_CATALOG = Object.freeze({
       displayName: "View Local Close",
       description: "Read local-close packs and their status.",
       requiredPermissionCodes: ["ouclose.read"],
+      allowedStepScopes: getWorkflowStepAllowedScopeTypes("ouclose.read"),
       viewOnly: true,
       sortOrder: 10,
     }),
@@ -115,6 +127,7 @@ const WORKFLOW_AUTHORITY_CATALOG = Object.freeze({
       displayName: "Prepare Local Close",
       description: "Prepare and submit local-close work.",
       requiredPermissionCodes: ["ouclose.prepare"],
+      allowedStepScopes: getWorkflowStepAllowedScopeTypes("ouclose.prepare"),
       sortOrder: 20,
     }),
     freezeAuthority({
@@ -122,6 +135,7 @@ const WORKFLOW_AUTHORITY_CATALOG = Object.freeze({
       displayName: "Review Local Close",
       description: "Review local-close checkpoints before approval.",
       requiredPermissionCodes: ["ouclose.review"],
+      allowedStepScopes: getWorkflowStepAllowedScopeTypes("ouclose.review"),
       sortOrder: 30,
     }),
     freezeAuthority({
@@ -129,6 +143,7 @@ const WORKFLOW_AUTHORITY_CATALOG = Object.freeze({
       displayName: "Approve and lock Local Close",
       description: "Give final local-close approval and lock the pack.",
       requiredPermissionCodes: ["ouclose.approve", "ouclose.lock"],
+      allowedStepScopes: getWorkflowStepAllowedScopeTypes("ouclose.approve"),
       sortOrder: 40,
     }),
     freezeAuthority({
@@ -136,6 +151,7 @@ const WORKFLOW_AUTHORITY_CATALOG = Object.freeze({
       displayName: "Reopen Local Close",
       description: "Reopen a previously closed local-close pack.",
       requiredPermissionCodes: ["ouclose.reopen"],
+      allowedStepScopes: getWorkflowStepAllowedScopeTypes("ouclose.reopen"),
       sortOrder: 50,
     }),
     freezeAuthority({
@@ -143,6 +159,7 @@ const WORKFLOW_AUTHORITY_CATALOG = Object.freeze({
       displayName: "Administer Local Close",
       description: "Apply override or administrative control to local-close packs.",
       anyPermissionCodes: ["ouclose.admin", "ouclose.override_post_lock"],
+      allowedStepScopes: getWorkflowStepAllowedScopeTypes("ouclose.admin"),
       sortOrder: 60,
     }),
   ]),
@@ -151,37 +168,50 @@ const WORKFLOW_AUTHORITY_CATALOG = Object.freeze({
       code: "PERIOD_CLOSE_READINESS",
       displayName: "Review period-close readiness",
       description: "Review fiscal periods, journals, and supporting GL visibility before close.",
-      requiredPermissionCodes: ["org.fiscal_period.read"],
+      requiredPermissionCodes: [PERIOD_CLOSE_READINESS_PERMISSION_CODE],
+      allowedStepScopes: ["LEGAL_ENTITY", "COUNTRY", "GROUP"],
       viewOnly: true,
       sortOrder: 10,
     }),
     freezeAuthority({
-      code: "PERIOD_CLOSE",
-      displayName: "Close periods",
-      description: "Perform final period close after readiness review.",
-      requiredPermissionCodes: ["gl.period.close"],
+      code: "PERIOD_CLOSE_APPROVAL",
+      displayName: "Approve period close",
+      description: "Approve governed period-close workflow steps without executing the close run.",
+      requiredPermissionCodes: [PERIOD_CLOSE_APPROVE_PERMISSION_CODE],
+      allowedStepScopes: ["LEGAL_ENTITY", "COUNTRY", "GROUP"],
       sortOrder: 20,
+    }),
+    freezeAuthority({
+      code: "PERIOD_CLOSE_EXECUTION",
+      displayName: "Execute period close",
+      description: "Execute the final governed period close once workflow approval is complete.",
+      requiredPermissionCodes: [PERIOD_CLOSE_EXECUTE_PERMISSION_CODE],
+      allowedStepScopes: ["LEGAL_ENTITY", "COUNTRY"],
+      sortOrder: 30,
     }),
     freezeAuthority({
       code: "PERIOD_REOPEN",
       displayName: "Reopen periods",
       description: "Reopen a previously closed period.",
-      requiredPermissionCodes: ["gl.period.reopen"],
-      sortOrder: 30,
+      requiredPermissionCodes: [PERIOD_CLOSE_REOPEN_PERMISSION_CODE],
+      allowedStepScopes: ["LEGAL_ENTITY", "COUNTRY"],
+      sortOrder: 40,
     }),
     freezeAuthority({
       code: "PERIOD_ADMIN",
       displayName: "Administer period close",
       description: "Apply exceptional period-close governance controls.",
-      requiredPermissionCodes: ["gl.period.admin"],
-      sortOrder: 40,
+      requiredPermissionCodes: [PERIOD_CLOSE_ADMIN_PERMISSION_CODE],
+      allowedStepScopes: ["COUNTRY", "GROUP"],
+      sortOrder: 50,
     }),
     freezeAuthority({
       code: "PERIOD_CLOSED_POST",
       displayName: "Post to soft-closed periods",
       description: "Post approved journals into soft-closed periods.",
-      requiredPermissionCodes: ["gl.journal.post_to_closed_period"],
-      sortOrder: 50,
+      requiredPermissionCodes: [PERIOD_CLOSE_CLOSED_POST_PERMISSION_CODE],
+      allowedStepScopes: ["LEGAL_ENTITY", "COUNTRY", "GROUP"],
+      sortOrder: 60,
     }),
   ]),
   CONSOLIDATION_RUN: freezeList([
@@ -190,6 +220,7 @@ const WORKFLOW_AUTHORITY_CATALOG = Object.freeze({
       displayName: "View Consolidation",
       description: "Read consolidation runs, mappings, and reports.",
       requiredPermissionCodes: ["consolidation.run.read"],
+      allowedStepScopes: getWorkflowStepAllowedScopeTypes("consolidation.run.read"),
       viewOnly: true,
       sortOrder: 10,
     }),
@@ -198,6 +229,7 @@ const WORKFLOW_AUTHORITY_CATALOG = Object.freeze({
       displayName: "Prepare Consolidation runs",
       description: "Open and stage consolidation runs.",
       requiredPermissionCodes: ["consolidation.run.create"],
+      allowedStepScopes: getWorkflowStepAllowedScopeTypes("consolidation.run.create"),
       sortOrder: 20,
     }),
     freezeAuthority({
@@ -205,6 +237,7 @@ const WORKFLOW_AUTHORITY_CATALOG = Object.freeze({
       displayName: "Execute Consolidation runs",
       description: "Execute consolidation runs once inputs are ready.",
       requiredPermissionCodes: ["consolidation.run.execute"],
+      allowedStepScopes: getWorkflowStepAllowedScopeTypes("consolidation.run.execute"),
       sortOrder: 30,
     }),
     freezeAuthority({
@@ -212,6 +245,7 @@ const WORKFLOW_AUTHORITY_CATALOG = Object.freeze({
       displayName: "Post Consolidation adjustments",
       description: "Post consolidation adjustment entries.",
       requiredPermissionCodes: ["consolidation.adjustment.post"],
+      allowedStepScopes: getWorkflowStepAllowedScopeTypes("consolidation.adjustment.post"),
       sortOrder: 40,
     }),
     freezeAuthority({
@@ -219,6 +253,7 @@ const WORKFLOW_AUTHORITY_CATALOG = Object.freeze({
       displayName: "Post Consolidation eliminations",
       description: "Post consolidation elimination entries.",
       requiredPermissionCodes: ["consolidation.elimination.post"],
+      allowedStepScopes: getWorkflowStepAllowedScopeTypes("consolidation.elimination.post"),
       sortOrder: 50,
     }),
     freezeAuthority({
@@ -226,6 +261,7 @@ const WORKFLOW_AUTHORITY_CATALOG = Object.freeze({
       displayName: "Finalize Consolidation",
       description: "Finalize the consolidation run after execution and posting.",
       requiredPermissionCodes: ["consolidation.run.finalize"],
+      allowedStepScopes: getWorkflowStepAllowedScopeTypes("consolidation.run.finalize"),
       sortOrder: 60,
     }),
     freezeAuthority({
@@ -248,6 +284,7 @@ const MODEL_CATEGORY_LABELS = Object.freeze({
   runtime_role: CATEGORY_LABELS,
   assignment_preset: ASSIGNMENT_PRESET_CATEGORY_LABELS,
 });
+const WORKFLOW_PACKAGE_ASSIGNMENT_ROLE_PREFIX = "WORKFLOW_PACKAGE__";
 const ROLE_CATALOG_CODE_ALIASES = Object.freeze({
   CountryAPPoster: "CountryAPController",
 });
@@ -481,15 +518,25 @@ const ROLE_CATALOG = Object.freeze({
     workflowFamily: "LOCAL_CLOSE_PACK",
     sortOrder: 332,
   },
+  PeriodCloseSupervisorAuthority: {
+    code: "Period Close Supervisor",
+    category: "composable",
+    summary:
+      "Approves governed period-close workflow steps without receiving final close execution, reopen, or admin authority. This role stays centrally managed and is not exposed through local user administration or bootstrap handoff presets.",
+    capabilities: ["Period-close approval", "Supervisory signoff", "Workflow governance"],
+    recommendedScopes: ["LEGAL_ENTITY", "COUNTRY", "GROUP"],
+    workflowFamily: "PERIOD_CLOSE",
+    sortOrder: 333,
+  },
   PeriodCloseAuthority: {
     code: "Period Close Authority",
     category: "composable",
     summary:
-      "Closes accounting periods after readiness review without inheriting reopen-admin or manual journal-posting authority.",
-    capabilities: ["Period close", "Final close signoff", "Close governance"],
+      "Executes the governed final period close once workflow approval is complete, without inheriting reopen-admin or manual journal-posting authority.",
+    capabilities: ["Period-close execution", "Final close action", "Governed close run"],
     recommendedScopes: ["LEGAL_ENTITY", "COUNTRY"],
     workflowFamily: "PERIOD_CLOSE",
-    sortOrder: 333,
+    sortOrder: 334,
   },
   PeriodReopenAuthority: {
     code: "Period Reopen Authority",
@@ -499,17 +546,17 @@ const ROLE_CATALOG = Object.freeze({
     capabilities: ["Period reopen", "Controlled correction release"],
     recommendedScopes: ["LEGAL_ENTITY", "COUNTRY"],
     workflowFamily: "PERIOD_CLOSE",
-    sortOrder: 334,
+    sortOrder: 335,
   },
   PeriodAdminAuthority: {
     code: "Period Close Admin",
     category: "composable",
     summary:
-      "Handles exceptional period-close admin controls without becoming the routine manual GL poster.",
+      "Handles exceptional period-close repair and admin controls without becoming the routine close executor.",
     capabilities: ["Period admin", "Close override control", "Exceptional governance"],
     recommendedScopes: ["COUNTRY", "GROUP"],
     workflowFamily: "PERIOD_CLOSE",
-    sortOrder: 335,
+    sortOrder: 336,
   },
   ClosedPeriodJournalOverrideAuthority: {
     code: "Closed-Period Journal Override",
@@ -519,7 +566,7 @@ const ROLE_CATALOG = Object.freeze({
     capabilities: ["Closed-period posting", "Exceptional journal override"],
     recommendedScopes: ["LEGAL_ENTITY", "COUNTRY", "GROUP"],
     workflowFamily: "PERIOD_CLOSE",
-    sortOrder: 336,
+    sortOrder: 337,
   },
   GroupReportingController: {
     category: "composable",
@@ -632,11 +679,11 @@ const ROLE_CATALOG = Object.freeze({
     code: "Branch Fixed Asset Operator",
     category: "scoped",
     summary:
-      "Creates, updates, and activates branch-owned fixed assets while keeping disposal, transfer, and depreciation governance at entity scope.",
+      "Creates and updates branch-owned fixed assets while keeping activation, disposal, transfer, and depreciation governance at entity scope.",
     capabilities: [
       "Branch asset drafting",
-      "Branch asset activation",
       "Custodian-aware updates",
+      "Branch asset maintenance",
     ],
     recommendedScopes: ["OPERATING_UNIT"],
     sortOrder: 115,
@@ -755,6 +802,39 @@ function normalizeText(value) {
 function normalizeRoleCatalogCode(roleCode) {
   const normalizedRoleCode = normalizeText(roleCode);
   return ROLE_CATALOG_CODE_ALIASES[normalizedRoleCode] || normalizedRoleCode;
+}
+
+function isWorkflowPackageAssignmentRoleCode(roleCode) {
+  return normalizeText(roleCode).startsWith(WORKFLOW_PACKAGE_ASSIGNMENT_ROLE_PREFIX);
+}
+
+function buildManagedPackageRoleEntry(roleOrCode, requestedRoleCode) {
+  const packageName = normalizeText(roleOrCode?.name);
+  const runtimeCode = normalizeText(requestedRoleCode);
+  const displayCode = packageName || runtimeCode;
+  const metadata = buildMetadataEntry({
+    modelType: "runtime_role",
+    code: displayCode,
+    displayName: displayCode,
+    description:
+      "Managed through workflow governance so the runtime permission set stays aligned to the shipped authority model.",
+    category: "managed_authority",
+    workflowFamily: "CROSS_WORKFLOW",
+    sortOrder: 190,
+  });
+
+  return {
+    ...metadata,
+    runtimeCode,
+    technicalCode: packageName ? runtimeCode : "",
+    summary: metadata.description,
+    capabilities: ["Workflow-governed authority mapping"],
+    recommendedScopes: [],
+    managedPackageRole: true,
+    packageAuthorityOnly: true,
+    companionOnly: false,
+    companionNote: "",
+  };
 }
 function normalizeBootstrapHandoffPresetCode(presetCode) {
   const normalizedPresetCode = normalizeText(presetCode);
@@ -877,6 +957,7 @@ export function listWorkflowAuthorityDefinitions(workflowFamily) {
     ...authority,
     requiredPermissionCodes: cloneList(authority?.requiredPermissionCodes),
     anyPermissionCodes: cloneList(authority?.anyPermissionCodes),
+    allowedStepScopes: cloneList(authority?.allowedStepScopes),
   }));
 }
 
@@ -925,6 +1006,9 @@ export function getRoleCatalogEntry(roleOrCode) {
     typeof roleOrCode === "string"
       ? normalizeText(roleOrCode)
       : normalizeText(roleOrCode?.code || roleOrCode?.roleCode);
+  if (isWorkflowPackageAssignmentRoleCode(requestedRoleCode)) {
+    return buildManagedPackageRoleEntry(roleOrCode, requestedRoleCode);
+  }
   const normalizedRoleCode = normalizeRoleCatalogCode(requestedRoleCode);
   const base = ROLE_CATALOG[normalizedRoleCode] || null;
   const displayCode =

@@ -9485,19 +9485,6 @@ const spec = {
         ),
       },
     },
-    "/api/v1/gl/period-statuses/{bookId}/{periodId}/close": {
-      post: {
-        tags: ["GL"],
-        operationId: "closePeriod",
-        summary: "Set period close status",
-        parameters: [
-          pathParam("bookId", "Book identifier"),
-          pathParam("periodId", "Fiscal period identifier"),
-        ],
-        requestBody: bodyFromRef("#/components/schemas/PeriodCloseInput", false),
-        responses: withStandardResponses("201", "Period status updated", "#/components/schemas/PeriodCloseResponse"),
-      },
-    },
     "/api/v1/fx/rates/bulk-upsert": {
       post: {
         tags: ["FX"],

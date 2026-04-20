@@ -78,6 +78,7 @@ import {
   reverseShareholderCapitalFulfillment as reverseShareholderCapitalFulfillmentService,
 } from "../services/org.capital-fulfillment.service.js";
 import { recalculateShareholderOwnershipPctTx } from "../services/shareholderOwnership.js";
+import { PERIOD_CLOSE_VIEW_PERMISSION_CODES } from "../../../shared/periodCloseGovernance.js";
 import {
   parseOrgTreeReadFilters,
   parseFiscalCalendarPeriodFilters,
@@ -632,7 +633,7 @@ router.get(
 
 router.get(
   "/fiscal-calendars/:calendarId/periods",
-  requirePermission("org.fiscal_period.read"),
+  requireAnyPermission(PERIOD_CLOSE_VIEW_PERMISSION_CODES),
   asyncHandler(async (req, res) => {
     const tenantId = requireOrgTenantId(req);
     const filters = parseFiscalCalendarPeriodFilters(req.params, req.query);

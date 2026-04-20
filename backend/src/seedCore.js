@@ -6,6 +6,13 @@ import {
   PERMISSION_GROUPS,
 } from "./constants/permission-groups.js";
 import { buildSystemRoleDefinitions } from "./services/systemRoles.service.js";
+import {
+  PERIOD_CLOSE_ADMIN_PERMISSION_CODE,
+  PERIOD_CLOSE_APPROVE_PERMISSION_CODE,
+  PERIOD_CLOSE_CLOSED_POST_PERMISSION_CODE,
+  PERIOD_CLOSE_EXECUTE_PERMISSION_CODE,
+  PERIOD_CLOSE_REOPEN_PERMISSION_CODE,
+} from "../../shared/periodCloseGovernance.js";
 
 function parsePositiveInt(value) {
   const parsed = Number(value);
@@ -135,7 +142,8 @@ const PERMISSIONS = [
   ["gl.report.local.read", "Read local summary reports"],
   ["gl.report.ledger.read", "Read local ledger detail reports"],
   ["gl.report.statement.read", "Read local financial statement reports"],
-  ["gl.period.close", "Close accounting periods"],
+  [PERIOD_CLOSE_APPROVE_PERMISSION_CODE, "Approve period-close workflow steps"],
+  [PERIOD_CLOSE_EXECUTE_PERMISSION_CODE, "Execute governed accounting period close"],
   ["gl.period.reopen", "Reopen closed accounting periods"],
   ["gl.period.admin", "Administer period close overrides and operational controls"],
   ["ouclose.read", "Read local close packs and status"],
@@ -968,9 +976,20 @@ const LOCAL_CLOSE_REOPEN_ADMIN_AUTHORITY_PERMISSION_CODES = buildPermissionList(
   ],
 });
 
+const PERIOD_CLOSE_SUPERVISOR_AUTHORITY_PERMISSION_CODES = buildPermissionList({
+  permissions: [
+    "gl.book.read",
+    "gl.journal.read",
+    "gl.trial_balance.read",
+    "gl.report.local.read",
+    "gl.report.ledger.read",
+    "gl.report.statement.read",
+    PERIOD_CLOSE_APPROVE_PERMISSION_CODE,
+  ],
+});
+
 const PERIOD_CLOSE_AUTHORITY_PERMISSION_CODES = buildPermissionList({
   permissions: [
-    "org.fiscal_period.read",
     "gl.book.read",
     "gl.account.read",
     "gl.journal.read",
@@ -978,30 +997,25 @@ const PERIOD_CLOSE_AUTHORITY_PERMISSION_CODES = buildPermissionList({
     "gl.report.local.read",
     "gl.report.ledger.read",
     "gl.report.statement.read",
-    "gl.period.close",
+    PERIOD_CLOSE_EXECUTE_PERMISSION_CODE,
   ],
 });
 
 const PERIOD_REOPEN_AUTHORITY_PERMISSION_CODES = buildPermissionList({
   permissions: [
-    "org.fiscal_period.read",
     "gl.book.read",
     "gl.journal.read",
     "gl.trial_balance.read",
-    "gl.period.close",
-    "gl.period.reopen",
+    PERIOD_CLOSE_REOPEN_PERMISSION_CODE,
   ],
 });
 
 const PERIOD_ADMIN_AUTHORITY_PERMISSION_CODES = buildPermissionList({
   permissions: [
-    "org.fiscal_period.read",
     "gl.book.read",
     "gl.journal.read",
     "gl.trial_balance.read",
-    "gl.period.close",
-    "gl.period.reopen",
-    "gl.period.admin",
+    PERIOD_CLOSE_ADMIN_PERMISSION_CODE,
   ],
 });
 
@@ -1012,7 +1026,7 @@ const CLOSED_PERIOD_JOURNAL_OVERRIDE_AUTHORITY_PERMISSION_CODES = buildPermissio
     "gl.journal.read",
     "gl.trial_balance.read",
     "gl.journal.post",
-    "gl.journal.post_to_closed_period",
+    PERIOD_CLOSE_CLOSED_POST_PERMISSION_CODE,
   ],
 });
 
@@ -1157,9 +1171,6 @@ const BRANCH_FIXED_ASSET_OPERATOR_PERMISSION_CODES = buildPermissionList({
   permissions: [
     ...FIXED_ASSET_VIEWER_PERMISSION_CODES,
     "fixed_assets.upsert",
-    // Temporary rollout: branch accountants may activate branch-owned assets,
-    // but transfer, disposal, and depreciation governance remain entity-level.
-    "fixed_assets.post",
   ],
 });
 
@@ -1251,6 +1262,7 @@ export const ROLE_CAPABILITY_GROUPS = Object.freeze({
   LocalCloseReviewer: Object.freeze(["close.reviewer"]),
   LocalCloseApproveLockAuthority: Object.freeze([]),
   LocalCloseReopenAdminAuthority: Object.freeze([]),
+  PeriodCloseSupervisorAuthority: Object.freeze([]),
   PeriodCloseAuthority: Object.freeze([]),
   PeriodReopenAuthority: Object.freeze([]),
   PeriodAdminAuthority: Object.freeze([]),
@@ -1450,6 +1462,11 @@ const ALL_ROLE_DEFINITIONS = attachRoleMetadata([
     code: "LocalCloseReopenAdminAuthority",
     name: "Local Close Reopen / Admin Authority",
     permissions: LOCAL_CLOSE_REOPEN_ADMIN_AUTHORITY_PERMISSION_CODES,
+  },
+  {
+    code: "PeriodCloseSupervisorAuthority",
+    name: "Period Close Supervisor Authority",
+    permissions: PERIOD_CLOSE_SUPERVISOR_AUTHORITY_PERMISSION_CODES,
   },
   {
     code: "PeriodCloseAuthority",

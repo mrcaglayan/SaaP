@@ -8,6 +8,7 @@ const GOVERNANCE_BACKEND_TESTS = Object.freeze([
   "test-authz-pr2c-temporal-role-assignments.js",
   "test-authz-pr2d-shared-scope-utils.js",
   "test-security-pr1d-permission-rules.js",
+  "test-security-pr1e-period-close-split-guardrails.js",
   "test-workflows-pr3e-unified-migration.js",
   "test-approvals-pr3f-remaining-adhoc-migration.js",
   "test-cari-pr3c-unified-approval-pilot.js",

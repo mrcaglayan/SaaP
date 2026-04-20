@@ -1,4 +1,11 @@
 import { getRoleCatalogEntry } from "./roleCatalog.js";
+import {
+  PERIOD_CLOSE_ADMIN_PERMISSION_CODE,
+  PERIOD_CLOSE_APPROVE_PERMISSION_CODE,
+  PERIOD_CLOSE_EXECUTE_PERMISSION_CODE,
+  PERIOD_CLOSE_READINESS_PERMISSION_CODE,
+  PERIOD_CLOSE_REOPEN_PERMISSION_CODE,
+} from "../../../../shared/periodCloseGovernance.js";
 
 function freezeList(values) {
   return Object.freeze(Array.isArray(values) ? values : []);
@@ -53,17 +60,32 @@ const PERMISSION_FAMILY_CATALOG = Object.freeze({
   PERIOD_CLOSE_READINESS: Object.freeze({
     labelEn: "Period-close readiness",
     labelTr: "Donem kapanisi hazirlik",
-    allPermissionCodes: freezeList(["org.fiscal_period.read"]),
+    allPermissionCodes: freezeList([PERIOD_CLOSE_READINESS_PERMISSION_CODE]),
     anyPermissionCodes: freezeList([
       "gl.book.read",
       "gl.journal.read",
       "gl.trial_balance.read",
     ]),
   }),
-  PERIOD_CLOSE: Object.freeze({
-    labelEn: "Period close",
-    labelTr: "Donem kapatma",
-    allPermissionCodes: freezeList(["gl.period.close"]),
+  PERIOD_CLOSE_APPROVAL: Object.freeze({
+    labelEn: "Period-close approval",
+    labelTr: "Donem kapanisi onay",
+    allPermissionCodes: freezeList([PERIOD_CLOSE_APPROVE_PERMISSION_CODE]),
+  }),
+  PERIOD_CLOSE_EXECUTION: Object.freeze({
+    labelEn: "Period-close execution",
+    labelTr: "Donem kapanisi yurutme",
+    allPermissionCodes: freezeList([PERIOD_CLOSE_EXECUTE_PERMISSION_CODE]),
+  }),
+  PERIOD_REOPEN: Object.freeze({
+    labelEn: "Period reopen",
+    labelTr: "Donemi yeniden acma",
+    allPermissionCodes: freezeList([PERIOD_CLOSE_REOPEN_PERMISSION_CODE]),
+  }),
+  PERIOD_ADMIN: Object.freeze({
+    labelEn: "Period-close admin",
+    labelTr: "Donem kapanisi yonetim",
+    allPermissionCodes: freezeList([PERIOD_CLOSE_ADMIN_PERMISSION_CODE]),
   }),
   CONSOLIDATION_PREPARE: Object.freeze({
     labelEn: "Consolidation prepare",
@@ -114,7 +136,10 @@ const ROLE_PERMISSION_FAMILY_HINTS = Object.freeze({
     "CONSOLIDATION_ELIMINATE",
     "CONSOLIDATION_FINALIZE",
   ]),
-  PeriodCloseAuthority: freezeList(["PERIOD_CLOSE"]),
+  PeriodCloseSupervisorAuthority: freezeList(["PERIOD_CLOSE_APPROVAL"]),
+  PeriodCloseAuthority: freezeList(["PERIOD_CLOSE_EXECUTION"]),
+  PeriodReopenAuthority: freezeList(["PERIOD_REOPEN"]),
+  PeriodAdminAuthority: freezeList(["PERIOD_ADMIN"]),
   ConsolidationRunPreparer: freezeList(["CONSOLIDATION_PREPARE"]),
   ConsolidationRunExecutor: freezeList(["CONSOLIDATION_EXECUTE"]),
   ConsolidationAdjustmentPoster: freezeList(["CONSOLIDATION_ADJUST"]),
@@ -127,7 +152,9 @@ const REQUIRED_RISKY_RUNTIME_ROLE_RULE_IDS = Object.freeze([
   "ap-reviewer-poster",
   "local-close-prepare-review",
   "local-close-review-lock",
-  "period-close-readiness-close",
+  "period-close-readiness-approval",
+  "period-close-approval-execution",
+  "period-close-execution-reopen",
   "consolidation-operator-finalizer",
 ]);
 
@@ -188,19 +215,47 @@ const RISKY_RUNTIME_ROLE_RULES = Object.freeze({
     leftPermissionFamilyCodes: ["LOCAL_CLOSE_REVIEW"],
     rightPermissionFamilyCodes: ["LOCAL_CLOSE_APPROVE_LOCK"],
   }),
-  "period-close-readiness-close": freezeRule({
-    id: "period-close-readiness-close",
+  "period-close-readiness-approval": freezeRule({
+    id: "period-close-readiness-approval",
     severity: "warn",
-    titleEn: "Period Close readiness and close overlap",
-    titleTr: "Donem kapanisi hazirlik ve kapatma cakismasi",
+    titleEn: "Period Close readiness and approval overlap",
+    titleTr: "Donem kapanisi hazirlik ve onay cakismasi",
     descriptionEn:
-      "The same user can both review readiness and close the period at {{scope}}.",
+      "The same user can both review readiness and approve period close at {{scope}}.",
     descriptionTr:
-      "Ayni kullanici {{scope}} kapsaminda hem donem hazirligini inceleyebilir hem de donemi kapatabilir.",
+      "Ayni kullanici {{scope}} kapsaminda hem donem hazirligini inceleyebilir hem de donem kapanisini onaylayabilir.",
     leftRoleCodes: ["BranchOperator", "GLOperator", "GroupReportingController"],
-    rightRoleCodes: ["PeriodCloseAuthority"],
+    rightRoleCodes: ["PeriodCloseSupervisorAuthority"],
     leftPermissionFamilyCodes: ["PERIOD_CLOSE_READINESS"],
-    rightPermissionFamilyCodes: ["PERIOD_CLOSE"],
+    rightPermissionFamilyCodes: ["PERIOD_CLOSE_APPROVAL"],
+  }),
+  "period-close-approval-execution": freezeRule({
+    id: "period-close-approval-execution",
+    severity: "warn",
+    titleEn: "Period Close approval and execution overlap",
+    titleTr: "Donem kapanisi onay ve yurutme cakismasi",
+    descriptionEn:
+      "The same user can both approve and execute period close at {{scope}}.",
+    descriptionTr:
+      "Ayni kullanici {{scope}} kapsaminda hem donem kapanisini onaylayabilir hem de yurutup kapatabilir.",
+    leftRoleCodes: ["PeriodCloseSupervisorAuthority"],
+    rightRoleCodes: ["PeriodCloseAuthority"],
+    leftPermissionFamilyCodes: ["PERIOD_CLOSE_APPROVAL"],
+    rightPermissionFamilyCodes: ["PERIOD_CLOSE_EXECUTION"],
+  }),
+  "period-close-execution-reopen": freezeRule({
+    id: "period-close-execution-reopen",
+    severity: "warn",
+    titleEn: "Period Close execution and reopen overlap",
+    titleTr: "Donem kapanisi yurutme ve yeniden acma cakismasi",
+    descriptionEn:
+      "The same user can both execute and reopen period close at {{scope}}.",
+    descriptionTr:
+      "Ayni kullanici {{scope}} kapsaminda hem donem kapanisini yurutabilir hem de yeniden acabilir.",
+    leftRoleCodes: ["PeriodCloseAuthority"],
+    rightRoleCodes: ["PeriodReopenAuthority"],
+    leftPermissionFamilyCodes: ["PERIOD_CLOSE_EXECUTION"],
+    rightPermissionFamilyCodes: ["PERIOD_REOPEN"],
   }),
   "consolidation-operator-finalizer": freezeRule({
     id: "consolidation-operator-finalizer",

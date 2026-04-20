@@ -471,8 +471,9 @@ async function main() {
     assert(
       !localAdminRoleCodes.includes("SecurityAdmin") &&
         !localAdminRoleCodes.includes("SystemAdmin") &&
-        !localAdminRoleCodes.includes("LocalUserAdmin"),
-      "Local user admin allow-list must exclude tenant security and local-admin roles themselves"
+        !localAdminRoleCodes.includes("LocalUserAdmin") &&
+        !localAdminRoleCodes.includes("PeriodCloseSupervisorAuthority"),
+      "Local user admin allow-list must exclude tenant security, local-admin roles, and centrally managed period-close supervisor roles"
     );
     const auditorRole =
       localAdminRoles.find((role) => String(role.code || "").trim() === "AuditorReadOnly") ||
@@ -567,6 +568,30 @@ async function main() {
         "not manageable through local user administration"
       ),
       "Local user admin must block non-local or system roles"
+    );
+
+    const blockedCentralRoleResponse = await apiRequest({
+      baseUrl: BASE_URL,
+      token: localManagerToken,
+      method: "POST",
+      requestPath: "/api/v1/security/local-user-admin/assignments",
+      expectedStatus: 400,
+      body: {
+        email: invitedLocalUserEmail,
+        name: "PR7C Invited OU Accountant",
+        roleCode: "PeriodCloseSupervisorAuthority",
+        scopeType: "LEGAL_ENTITY",
+        scopeId: entityAId,
+      },
+    });
+    assert(
+      String(blockedCentralRoleResponse.json?.message || "").includes(
+        "centrally managed"
+      ) &&
+        String(blockedCentralRoleResponse.json?.message || "").includes(
+          "PeriodCloseSupervisorAuthority"
+        ),
+      "Local user admin must surface the explicit central-management rejection for PeriodCloseSupervisorAuthority"
     );
 
     await apiRequest({

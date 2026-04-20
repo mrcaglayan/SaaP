@@ -109,6 +109,10 @@ async function main() {
     "CountryAPPoster",
     "GLOperator",
     "GLPostingAuthority",
+    "PeriodCloseSupervisorAuthority",
+    "PeriodCloseAuthority",
+    "PeriodReopenAuthority",
+    "PeriodAdminAuthority",
     "ShareholderCapitalOperator",
     "OUAccountant",
     "TreasuryOperator",
@@ -227,8 +231,25 @@ async function main() {
   assertRoleHas(permissionCodesByRole, "GLPostingAuthority", "gl.journal.read");
   assertRoleHas(permissionCodesByRole, "GLPostingAuthority", "gl.trial_balance.read");
   assertRoleHas(permissionCodesByRole, "GLPostingAuthority", "gl.journal.post");
-  assertRoleHas(permissionCodesByRole, "GLPostingAuthority", "gl.period.close");
   assertRoleLacks(permissionCodesByRole, "GLPostingAuthority", "gl.journal.create");
+  assertRoleLacks(permissionCodesByRole, "GLPostingAuthority", "gl.period.close.execute");
+
+  assertRoleHas(
+    permissionCodesByRole,
+    "PeriodCloseSupervisorAuthority",
+    "gl.period.close.approve"
+  );
+  assertRoleLacks(
+    permissionCodesByRole,
+    "PeriodCloseSupervisorAuthority",
+    "gl.period.close.execute"
+  );
+  assertRoleHas(permissionCodesByRole, "PeriodCloseAuthority", "gl.period.close.execute");
+  assertRoleLacks(permissionCodesByRole, "PeriodCloseAuthority", "gl.period.close.approve");
+  assertRoleHas(permissionCodesByRole, "PeriodReopenAuthority", "gl.period.reopen");
+  assertRoleLacks(permissionCodesByRole, "PeriodReopenAuthority", "gl.period.close.execute");
+  assertRoleHas(permissionCodesByRole, "PeriodAdminAuthority", "gl.period.admin");
+  assertRoleLacks(permissionCodesByRole, "PeriodAdminAuthority", "gl.period.close.execute");
 
   assertRoleHas(
     permissionCodesByRole,

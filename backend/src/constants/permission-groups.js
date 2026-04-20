@@ -56,7 +56,8 @@ export const PERMISSION_GROUPS = {
   },
   "gl.period_governance": {
     permissions: [
-      "gl.period.close",
+      "gl.period.close.approve",
+      "gl.period.close.execute",
       "gl.period.reopen",
       "gl.period.admin",
     ],

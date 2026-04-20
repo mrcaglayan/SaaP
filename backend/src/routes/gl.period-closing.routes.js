@@ -2,6 +2,7 @@ import { query, withTransaction } from "../db.js";
 import {
   assertScopeAccess,
   buildScopeFilter,
+  requireAnyPermission,
   requirePermission,
 } from "../middleware/rbac.js";
 import {
@@ -10,10 +11,12 @@ import {
   assertLegalEntityBelongsToTenant,
 } from "../tenantGuards.js";
 import {
-  closePeriodStatus,
   listPeriodCloseRuns,
 } from "../services/gl.period-closing.service.js";
-import { loadPermissionBundle } from "../services/authz.scope.service.js";
+import {
+  checkUserCanViewPeriodCloseAtScope,
+  loadPermissionBundle,
+} from "../services/authz.scope.service.js";
 import { evaluateWorkflowApprovalGate } from "../services/workflows.service.js";
 import { evaluateCashFxRevaluationCloseGate } from "../services/cash.fx.revaluation.service.js";
 import {
@@ -26,6 +29,11 @@ import {
   parsePeriodStatusCloseInput,
 } from "./gl.period-closing.validators.js";
 import { asyncHandler, badRequest, parsePositiveInt, resolveTenantId } from "./_utils.js";
+import {
+  PERIOD_CLOSE_EXECUTE_PERMISSION_CODE,
+  PERIOD_CLOSE_READINESS_PERMISSION_CODE,
+  PERIOD_CLOSE_VIEW_PERMISSION_CODES,
+} from "../../../shared/periodCloseGovernance.js";
 
 /**
  * Register period-close routes and keep linked close-cycle items synchronized
@@ -164,12 +172,38 @@ export function registerGlPeriodClosingRoutes(router, deps = {}) {
     return !bundle?.missingPermission;
   }
 
+  async function assertPeriodCloseReviewAccess(req) {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) throw badRequest("tenantId is required");
+
+    const userId = parsePositiveInt(req.user?.userId);
+    if (!userId) throw badRequest("Authenticated user is required");
+
+    const requestedScope = await resolveScopeFromBookId(req.params?.bookId, tenantId);
+    if (!requestedScope?.scopeType || !requestedScope?.scopeId) {
+      return;
+    }
+
+    const canViewPeriodClose = await checkUserCanViewPeriodCloseAtScope(
+      userId,
+      tenantId,
+      requestedScope.scopeType,
+      requestedScope.scopeId
+    );
+    if (!canViewPeriodClose) {
+      throw forbidden(
+        `Missing period-close governance permission. Expected one of: ${PERIOD_CLOSE_VIEW_PERMISSION_CODES.join(", ")}`
+      );
+    }
+  }
+
   router.get(
     "/period-closing/:bookId/:periodId/pre-close-review",
-    requirePermission("gl.period.close", {
-      resolveScope: async (req, tenantId) => {
-        return resolveScopeFromBookId(req.params?.bookId, tenantId);
-      },
+    asyncHandler(async (req, _res, next) => {
+      // Readiness review is valid for either the readiness reviewer or the
+      // close authority, as long as the same org scope is covered.
+      await assertPeriodCloseReviewAccess(req);
+      next();
     }),
     asyncHandler(async (req, res) => {
       const tenantId = resolveTenantId(req);
@@ -205,7 +239,7 @@ export function registerGlPeriodClosingRoutes(router, deps = {}) {
 
   router.get(
     "/period-closing/runs",
-    requirePermission("gl.period.close", {
+    requireAnyPermission(PERIOD_CLOSE_VIEW_PERMISSION_CODES, {
       resolveScope: async (req, tenantId) => {
         return resolveScopeFromBookId(req.query?.bookId, tenantId);
       },
@@ -232,7 +266,7 @@ export function registerGlPeriodClosingRoutes(router, deps = {}) {
 
   router.post(
     "/period-closing/:bookId/:periodId/close-run",
-    requirePermission("gl.period.close", {
+    requirePermission(PERIOD_CLOSE_EXECUTE_PERMISSION_CODE, {
       resolveScope: async (req, tenantId) => {
         return resolveScopeFromBookId(req.params?.bookId, tenantId);
       },
@@ -998,6 +1032,9 @@ export function registerGlPeriodClosingRoutes(router, deps = {}) {
               bookId,
               fiscalPeriodId,
               closeStatus,
+              currentStepNo: Number(closeResult?.gate?.currentStepNo || 0),
+              stageScopeType: closeResult?.gate?.stageScopeType || null,
+              requiredPermissionCode: closeResult?.gate?.requiredPermissionCode || null,
               run: closeResult.run || null,
               assignment: closeResult.gate?.assignment || null,
               instance: closeResult.gate?.instance || null,
@@ -1253,35 +1290,26 @@ export function registerGlPeriodClosingRoutes(router, deps = {}) {
 
   router.post(
     "/period-statuses/:bookId/:periodId/close",
-    requirePermission("gl.period.close", {
+    requirePermission(PERIOD_CLOSE_EXECUTE_PERMISSION_CODE, {
       resolveScope: async (req, tenantId) => {
         return resolveScopeFromBookId(req.params?.bookId, tenantId);
       },
     }),
     asyncHandler(async (req, res) => {
-      const tenantId = resolveTenantId(req);
-      if (!tenantId) throw badRequest("tenantId is required");
-
-      const { bookId, fiscalPeriodId, status, note } = parsePeriodStatusCloseInput(
-        req,
-        periodStatuses
-      );
-      const userId = parsePositiveInt(req.user?.userId);
-      const result = await closePeriodStatus({
-        tenantId,
-        bookId,
-        fiscalPeriodId,
-        status,
-        note,
-        userId,
-        assertBookBelongsToTenant,
-        assertFiscalPeriodBelongsToCalendar,
-        getEffectivePeriodStatus,
-      });
-
-      return res.status(201).json({
-        ok: true,
-        ...result,
+      // Legacy direct period-status mutation is retired. Period close must run
+      // through the governed close-run path so workflow approval cannot be bypassed.
+      const { bookId, fiscalPeriodId } = parsePeriodStatusCloseInput(req, periodStatuses);
+      return res.status(410).json({
+        message:
+          "Legacy direct-close route is retired. Use /api/v1/gl/period-closing/{bookId}/{periodId}/close-run.",
+        code: "LEGACY_DIRECT_CLOSE_ROUTE_RETIRED",
+        details: {
+          bookId,
+          fiscalPeriodId,
+          expectedReadinessPermissionCode: PERIOD_CLOSE_READINESS_PERMISSION_CODE,
+          expectedExecutionPermissionCode: PERIOD_CLOSE_EXECUTE_PERMISSION_CODE,
+        },
+        requestId: req.requestId || null,
       });
     })
   );

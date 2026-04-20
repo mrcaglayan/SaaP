@@ -9,6 +9,7 @@ import {
   getApWorkflowRolloutState,
   DEFAULT_AP_WORKFLOW_DEFINITION_CODE,
 } from "../src/services/ap.document.workflow.rollout.service.js";
+import { PERIOD_CLOSE_APPROVE_PERMISSION_CODE } from "../../shared/periodCloseGovernance.js";
 
 function assert(condition, message) {
   if (!condition) {
@@ -176,8 +177,8 @@ async function createPeriodCloseAssignment({
         allow_self_approve,
         escalation_after_hours
      )
-     VALUES (?, 1, 'GROUP', 'gl.period.close', 1, FALSE, NULL)`,
-    [definitionId]
+     VALUES (?, 1, 'GROUP', ?, 1, FALSE, NULL)`,
+    [definitionId, PERIOD_CLOSE_APPROVE_PERMISSION_CODE]
   );
   await query(
     `INSERT INTO workflow_assignments (

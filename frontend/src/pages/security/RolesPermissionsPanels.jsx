@@ -14,7 +14,7 @@ function normalizeText(value) {
 
 function getRoleAuthorityLabel(entry) {
   if (entry?.managedPackageRole) {
-    return "Managed authority";
+    return "Package-backed authority";
   }
   if (entry?.companionOnly) {
     return "Companion authority";

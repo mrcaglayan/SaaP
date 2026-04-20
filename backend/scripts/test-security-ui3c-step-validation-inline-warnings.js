@@ -5,8 +5,16 @@ import { fileURLToPath } from "node:url";
 import {
   listWorkflowAuthorityDefinitions,
 } from "../../frontend/src/pages/security/roleCatalog.js";
-import { buildWorkflowStepValidationModel } from "../../frontend/src/pages/settings/workflows/utils/workflowSetupHelpers.js";
+import {
+  buildWorkflowStepValidationModel,
+  listWorkflowStepAuthorityOptions,
+} from "../../frontend/src/pages/settings/workflows/utils/workflowSetupHelpers.js";
 import { getApWorkflowRequiredPermissionCode } from "../../shared/cariDocumentWorkflowGovernance.js";
+import {
+  PERIOD_CLOSE_APPROVE_PERMISSION_CODE,
+  PERIOD_CLOSE_EXECUTE_PERMISSION_CODE,
+  PERIOD_CLOSE_READINESS_PERMISSION_CODE,
+} from "../../shared/periodCloseGovernance.js";
 
 function l(en) {
   return en;
@@ -39,6 +47,14 @@ async function main() {
     COUNTRY: "Country",
     GROUP: "Group",
   };
+  const periodCloseWorkflowAuthorities = listWorkflowStepAuthorityOptions({
+    processType: "PERIOD_CLOSE",
+    workflowAuthorityEntries: listWorkflowAuthorityDefinitions("PERIOD_CLOSE"),
+  });
+  const consolidationWorkflowAuthorities = listWorkflowStepAuthorityOptions({
+    processType: "CONSOLIDATION_RUN",
+    workflowAuthorityEntries: listWorkflowAuthorityDefinitions("CONSOLIDATION_RUN"),
+  });
 
   const missingAuthorityValidation = buildWorkflowStepValidationModel({
     stepDrafts: [
@@ -95,8 +111,8 @@ async function main() {
       {
         stepNo: 1,
         stageScopeType: "LEGAL_ENTITY",
-        requiredPermissionCode: "gl.period.close",
-        requiredAuthorityLabel: "Close periods",
+        requiredPermissionCode: PERIOD_CLOSE_APPROVE_PERMISSION_CODE,
+        requiredAuthorityLabel: "Approve period close",
         allowSelfApprove: true,
       },
     ],
@@ -173,13 +189,13 @@ async function main() {
     "UI-3C should keep AP submit coverage gaps visible instead of limiting warnings to APPROVE only"
   );
 
-  const periodCloseExtensionValidation = buildWorkflowStepValidationModel({
+  const periodCloseGroupApprovalValidation = buildWorkflowStepValidationModel({
     stepDrafts: [
       {
         stepNo: 1,
         stageScopeType: "GROUP",
-        requiredPermissionCode: "gl.period.close",
-        requiredAuthorityLabel: "Close periods",
+        requiredPermissionCode: PERIOD_CLOSE_APPROVE_PERMISSION_CODE,
+        requiredAuthorityLabel: "Approve period close",
         allowSelfApprove: false,
       },
     ],
@@ -190,11 +206,124 @@ async function main() {
   });
 
   assert.equal(
-    periodCloseExtensionValidation.steps[0].blockingIssues.some(
-      (issue) => issue.code === "period_close_group_extension_not_ready"
+    periodCloseGroupApprovalValidation.steps[0].blockingIssues.some(
+      (issue) => issue.code === "authority_scope_mismatch"
+    ),
+    false,
+    "UI-3C should allow GROUP period-close approval steps in the split governance model"
+  );
+  assert.deepEqual(
+    periodCloseWorkflowAuthorities.map((entry) => entry.primaryPermissionCode),
+    [
+      PERIOD_CLOSE_READINESS_PERMISSION_CODE,
+      PERIOD_CLOSE_APPROVE_PERMISSION_CODE,
+    ],
+    "UI-3C should expose only readiness and approval authorities for PERIOD_CLOSE step editing"
+  );
+
+  const consolidationPrepareEntry = consolidationWorkflowAuthorities.find(
+    (entry) => entry.code === "CONSOLIDATION_PREPARE"
+  );
+  assert.deepEqual(
+    consolidationPrepareEntry?.allowedStepScopes,
+    ["OPERATING_UNIT", "LEGAL_ENTITY", "GROUP"],
+    "UI-3C should surface the consolidation prepare authority scopes from the shared authority contract"
+  );
+
+  const consolidationLegalEntityValidation = buildWorkflowStepValidationModel({
+    stepDrafts: [
+      {
+        stepNo: 1,
+        stageScopeType: "LEGAL_ENTITY",
+        requiredPermissionCode: "consolidation.run.create",
+        requiredAuthorityLabel: "Prepare Consolidation runs",
+        requiredAuthorityCode: "CONSOLIDATION_PREPARE",
+        allowSelfApprove: false,
+      },
+    ],
+    processType: "CONSOLIDATION_RUN",
+    workflowAuthorityEntries: listWorkflowAuthorityDefinitions("CONSOLIDATION_RUN"),
+    stepScopeLabels,
+    l,
+  });
+  assert.equal(
+    consolidationLegalEntityValidation.steps[0].blockingIssues.some(
+      (issue) => issue.code === "authority_scope_mismatch"
+    ),
+    false,
+    "UI-3C should allow Legal Entity consolidation preparation steps when the selected authority supports them"
+  );
+
+  const consolidationCountryValidation = buildWorkflowStepValidationModel({
+    stepDrafts: [
+      {
+        stepNo: 1,
+        stageScopeType: "COUNTRY",
+        requiredPermissionCode: "consolidation.run.create",
+        requiredAuthorityLabel: "Prepare Consolidation runs",
+        requiredAuthorityCode: "CONSOLIDATION_PREPARE",
+        allowSelfApprove: false,
+      },
+    ],
+    processType: "CONSOLIDATION_RUN",
+    workflowAuthorityEntries: listWorkflowAuthorityDefinitions("CONSOLIDATION_RUN"),
+    stepScopeLabels,
+    l,
+  });
+  assert.equal(
+    consolidationCountryValidation.steps[0].blockingIssues.some(
+      (issue) => issue.code === "authority_scope_mismatch"
     ),
     true,
-    "UI-3C should block unsupported group period-close steps before save"
+    "UI-3C should still reject consolidation preparation scopes that fall outside the authority contract"
+  );
+
+  const invalidPeriodCloseExecutionValidation = buildWorkflowStepValidationModel({
+    stepDrafts: [
+      {
+        stepNo: 1,
+        stageScopeType: "LEGAL_ENTITY",
+        requiredPermissionCode: PERIOD_CLOSE_EXECUTE_PERMISSION_CODE,
+        requiredAuthorityLabel: "Execute period close",
+        allowSelfApprove: false,
+      },
+    ],
+    processType: "PERIOD_CLOSE",
+    workflowAuthorityEntries: listWorkflowAuthorityDefinitions("PERIOD_CLOSE"),
+    stepScopeLabels,
+    l,
+  });
+
+  assert.equal(
+    invalidPeriodCloseExecutionValidation.steps[0].blockingIssues.some(
+      (issue) => issue.code === "period_close_permission_mismatch"
+    ),
+    true,
+    "UI-3C should block PERIOD_CLOSE steps that try to use execution instead of readiness or approval"
+  );
+
+  const readinessOnlyPeriodCloseValidation = buildWorkflowStepValidationModel({
+    stepDrafts: [
+      {
+        stepNo: 1,
+        stageScopeType: "LEGAL_ENTITY",
+        requiredPermissionCode: PERIOD_CLOSE_READINESS_PERMISSION_CODE,
+        requiredAuthorityLabel: "Review period-close readiness",
+        allowSelfApprove: false,
+      },
+    ],
+    processType: "PERIOD_CLOSE",
+    workflowAuthorityEntries: listWorkflowAuthorityDefinitions("PERIOD_CLOSE"),
+    stepScopeLabels,
+    l,
+  });
+
+  assert.equal(
+    readinessOnlyPeriodCloseValidation.steps[0].blockingIssues.some(
+      (issue) => issue.code === "period_close_approval_required"
+    ),
+    true,
+    "UI-3C should block PERIOD_CLOSE drafts that never include an approval step"
   );
 
   assert(

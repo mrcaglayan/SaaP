@@ -21,10 +21,13 @@ async function main() {
 
   const entityApController = getRoleCatalogEntry("EntityAPController");
   const glPostingAuthority = getRoleCatalogEntry("GLPostingAuthority");
+  const periodCloseSupervisor = getRoleCatalogEntry("PeriodCloseSupervisorAuthority");
   const packageRole = getRoleCatalogEntry("WORKFLOW_PACKAGE__PKG-AP-POST");
 
   assert.match(entityApController.replacementLabel || "", /AP Submitter/i);
   assert.equal(glPostingAuthority.companionOnly, true);
+  assert.match(periodCloseSupervisor.summary || "", /centrally managed/i);
+  assert.match(periodCloseSupervisor.summary || "", /bootstrap handoff/i);
   assert.equal(packageRole.managedPackageRole, true);
 
   assert(

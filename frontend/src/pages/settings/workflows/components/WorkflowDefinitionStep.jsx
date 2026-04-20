@@ -15,7 +15,7 @@ const DEFINITION_EXAMPLES = {
     nameTr: "Standart AP Ulke Onay Kapisi",
   },
   PERIOD_CLOSE: {
-    code: "WF_STD_PERIOD_CLOSE_3STEP_V1",
+    code: "WF_STD_PERIOD_CLOSE_V1",
     nameEn: "Standard Period Close Approval Chain",
     nameTr: "Standart Donem Kapanisi Onay Zinciri",
   },

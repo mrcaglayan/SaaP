@@ -2,6 +2,14 @@ import {
   AP_DOCUMENT_WORKFLOW_PROCESS_TYPE,
   getApWorkflowRequiredPermissionCode as getSharedApWorkflowRequiredPermissionCode,
 } from "../../../../../../shared/cariDocumentWorkflowGovernance.js";
+import {
+  PERIOD_CLOSE_ALLOWED_SCOPE_TYPES_BY_PERMISSION,
+  PERIOD_CLOSE_APPROVE_PERMISSION_CODE,
+  PERIOD_CLOSE_READINESS_PERMISSION_CODE,
+  PERIOD_CLOSE_WORKFLOW_ALLOWED_PERMISSION_CODES,
+  periodCloseWorkflowHasApprovalStep,
+} from "../../../../../../shared/periodCloseGovernance.js";
+import { getWorkflowStepAllowedScopeTypes } from "../../../../../../shared/workflowStepScopeGovernance.js";
 import { getOrgScopeTreeNodeSummaryValue } from "../../../../shared/orgScopeTree.js";
 
 export const PROCESS_TYPES = [
@@ -20,25 +28,6 @@ export const ASSIGNMENT_SCOPE_TYPES = [
 ];
 
 export const STEP_SCOPE_TYPES = ["OPERATING_UNIT", "LEGAL_ENTITY", "COUNTRY", "GROUP"];
-
-const WORKFLOW_AUTHORITY_ALLOWED_SCOPES_BY_PERMISSION = Object.freeze({
-  "ouclose.prepare": Object.freeze(["LEGAL_ENTITY"]),
-  "ouclose.review": Object.freeze(["LEGAL_ENTITY", "COUNTRY"]),
-  "ouclose.approve": Object.freeze(["LEGAL_ENTITY", "COUNTRY"]),
-  "ouclose.lock": Object.freeze(["LEGAL_ENTITY", "COUNTRY"]),
-  "ouclose.reopen": Object.freeze(["COUNTRY", "GROUP"]),
-  "org.fiscal_period.read": Object.freeze(["LEGAL_ENTITY", "COUNTRY", "GROUP"]),
-  "gl.period.close": Object.freeze(["LEGAL_ENTITY", "COUNTRY"]),
-  "gl.period.reopen": Object.freeze(["LEGAL_ENTITY", "COUNTRY"]),
-  "gl.period.admin": Object.freeze(["COUNTRY", "GROUP"]),
-  "gl.journal.post_to_closed_period": Object.freeze(["LEGAL_ENTITY", "COUNTRY", "GROUP"]),
-  "consolidation.run.create": Object.freeze(["GROUP"]),
-  "consolidation.run.execute": Object.freeze(["GROUP"]),
-  "consolidation.adjustment.post": Object.freeze(["GROUP"]),
-  "consolidation.elimination.post": Object.freeze(["GROUP"]),
-  "consolidation.run.finalize": Object.freeze(["GROUP"]),
-  "consolidation.group.upsert": Object.freeze(["GROUP"]),
-});
 
 export const AP_WORKFLOW_ACTION_CODES = Object.freeze([
   "DRAFT",
@@ -108,6 +97,35 @@ function findWorkflowAuthorityDefinition(requiredPermissionCode, workflowAuthori
       return permissionCodes.includes(normalizedPermissionCode);
     }) || null
   );
+}
+
+function resolveWorkflowAuthorityAllowedScopes(
+  requiredPermissionCode,
+  workflowAuthorityEntries = []
+) {
+  const normalizedPermissionCode = normalizePermissionCode(requiredPermissionCode);
+  if (!normalizedPermissionCode) {
+    return [];
+  }
+
+  const authorityDefinition = findWorkflowAuthorityDefinition(
+    normalizedPermissionCode,
+    workflowAuthorityEntries
+  );
+  const authorityAllowedScopes = Array.isArray(authorityDefinition?.allowedStepScopes)
+    ? authorityDefinition.allowedStepScopes
+        .map((scopeType) => String(scopeType || "").trim().toUpperCase())
+        .filter(Boolean)
+    : [];
+  if (authorityAllowedScopes.length > 0) {
+    return authorityAllowedScopes;
+  }
+
+  if (PERIOD_CLOSE_ALLOWED_SCOPE_TYPES_BY_PERMISSION[normalizedPermissionCode]) {
+    return PERIOD_CLOSE_ALLOWED_SCOPE_TYPES_BY_PERMISSION[normalizedPermissionCode];
+  }
+
+  return getWorkflowStepAllowedScopeTypes(normalizedPermissionCode);
 }
 
 function getWorkflowAuthorityLabel(requiredPermissionCode, workflowAuthorityEntries = []) {
@@ -275,12 +293,23 @@ export function listWorkflowStepAuthorityOptions({
     return [];
   }
   return (Array.isArray(workflowAuthorityEntries) ? workflowAuthorityEntries : [])
-    .filter((entry) => !entry?.viewOnly)
-    .filter((entry) => !String(entry?.code || "").trim().toUpperCase().includes("SETUP"))
     .map((entry) => ({
       ...entry,
       primaryPermissionCode: getWorkflowAuthorityPrimaryPermissionCode(entry),
     }))
+    .filter((entry) => {
+      const normalizedCode = String(entry?.code || "").trim().toUpperCase();
+      const primaryPermissionCode = String(entry?.primaryPermissionCode || "").trim();
+      if (!normalizedCode || normalizedCode.includes("SETUP")) {
+        return false;
+      }
+      if (normalizedProcessType === "PERIOD_CLOSE") {
+        return PERIOD_CLOSE_WORKFLOW_ALLOWED_PERMISSION_CODES.includes(
+          primaryPermissionCode
+        );
+      }
+      return !entry?.viewOnly;
+    })
     .filter((entry) => Boolean(entry.primaryPermissionCode));
 }
 
@@ -343,10 +372,25 @@ export function buildDefaultSteps(processType) {
       },
     ];
   }
-  const permissionCode =
-    normalized === "CONSOLIDATION_RUN"
-      ? "consolidation.run.finalize"
-      : "gl.period.close";
+  if (normalized === "PERIOD_CLOSE") {
+    return [
+      {
+        stepNo: 1,
+        stageScopeType: "LEGAL_ENTITY",
+        requiredPermissionCode: PERIOD_CLOSE_READINESS_PERMISSION_CODE,
+        minApproverCount: 1,
+        allowSelfApprove: false,
+      },
+      {
+        stepNo: 2,
+        stageScopeType: "LEGAL_ENTITY",
+        requiredPermissionCode: PERIOD_CLOSE_APPROVE_PERMISSION_CODE,
+        minApproverCount: 1,
+        allowSelfApprove: false,
+      },
+    ];
+  }
+  const permissionCode = "consolidation.run.finalize";
   return [
     {
       stepNo: 1,
@@ -1253,34 +1297,37 @@ export function buildWorkflowStepValidationModel({
         )
       );
     } else {
-      const allowedScopes =
-        WORKFLOW_AUTHORITY_ALLOWED_SCOPES_BY_PERMISSION[
-          normalizePermissionCode(normalizedPermissionCode)
-        ] || [];
+      if (
+        normalizedProcessType === "PERIOD_CLOSE" &&
+        !PERIOD_CLOSE_WORKFLOW_ALLOWED_PERMISSION_CODES.includes(
+          normalizedPermissionCode
+        )
+      ) {
+        blockingIssues.push(
+          buildWorkflowStepIssue(
+            "error",
+            "period_close_permission_mismatch",
+            l(
+              "Invalid period-close workflow authority",
+              "Gecersiz donem kapanisi workflow yetkisi"
+            ),
+            l(
+              `Period Close workflow steps may use only ${PERIOD_CLOSE_WORKFLOW_ALLOWED_PERMISSION_CODES.join(", ")}.`,
+              `Donem Kapanisi workflow adimlari yalnizca ${PERIOD_CLOSE_WORKFLOW_ALLOWED_PERMISSION_CODES.join(", ")} kullanabilir.`
+            )
+          )
+        );
+      }
+
+      const allowedScopes = resolveWorkflowAuthorityAllowedScopes(
+        normalizedPermissionCode,
+        workflowAuthorityEntries
+      );
       const allowedScopeLabels = allowedScopes.map((scopeType) =>
         getScopeLabel(scopeType, stepScopeLabels)
       );
 
       if (
-        normalizedProcessType === "PERIOD_CLOSE" &&
-        normalizedScopeType === "GROUP" &&
-        normalizePermissionCode(normalizedPermissionCode) === "gl.period.close"
-      ) {
-        blockingIssues.push(
-          buildWorkflowStepIssue(
-            "error",
-            "period_close_group_extension_not_ready",
-            l(
-              "Group period-close extension is not ready",
-              "Grup donem kapama extension'i hazir degil"
-            ),
-            l(
-              "Period Close authority currently supports LEGAL_ENTITY and COUNTRY only. GROUP final-close needs a later backend extension.",
-              "Donem kapama yetkisi su an yalnizca LEGAL_ENTITY ve COUNTRY destekler. GROUP final-close icin daha sonraki bir backend extension gerekir."
-            )
-          )
-        );
-      } else if (
         allowedScopes.length > 0 &&
         normalizedScopeType &&
         !allowedScopes.includes(normalizedScopeType)
@@ -1503,6 +1550,43 @@ export function buildWorkflowStepValidationModel({
       entry.hasBlockingIssues = entry.blockingIssues.length > 0;
       entry.hasWarnings = entry.warningIssues.length > 0;
     });
+  }
+
+  if (
+    normalizedProcessType === "PERIOD_CLOSE" &&
+    steps.length > 0 &&
+    !periodCloseWorkflowHasApprovalStep(
+      stepDrafts.map((stepDraft) => ({
+        requiredPermissionCode: normalizePermissionCode(
+          stepDraft?.requiredPermissionCode
+        ),
+      }))
+    )
+  ) {
+    const targetIndex = Math.max(0, steps.length - 1);
+    const targetEntry = steps[targetIndex];
+    if (targetEntry) {
+      targetEntry.blockingIssues.push(
+        buildWorkflowStepIssue(
+          "error",
+          "period_close_approval_required",
+          l(
+            "One approval step is required",
+            "En az bir onay adimi gerekli"
+          ),
+          l(
+            `PERIOD_CLOSE workflows must contain at least one ${PERIOD_CLOSE_APPROVE_PERMISSION_CODE} step before execution can be governed.`,
+            `PERIOD_CLOSE workflow'lari, icra yonetisim altina alinmadan once en az bir ${PERIOD_CLOSE_APPROVE_PERMISSION_CODE} adimi icermelidir.`
+          )
+        )
+      );
+      targetEntry.allIssues = [
+        ...targetEntry.blockingIssues,
+        ...targetEntry.warningIssues,
+      ];
+      targetEntry.hasBlockingIssues = true;
+      targetEntry.hasWarnings = targetEntry.warningIssues.length > 0;
+    }
   }
 
   const blockingIssueCount = steps.reduce(

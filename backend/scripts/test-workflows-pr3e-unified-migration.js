@@ -10,6 +10,13 @@ import {
   replaceWorkflowDefinitionSteps,
   resolveWorkflowDecisionPermissionAccess,
 } from "../src/services/workflows.service.js";
+import {
+  PERIOD_CLOSE_ADMIN_PERMISSION_CODE,
+  PERIOD_CLOSE_APPROVE_PERMISSION_CODE,
+  PERIOD_CLOSE_EXECUTE_PERMISSION_CODE,
+  PERIOD_CLOSE_READINESS_PERMISSION_CODE,
+  PERIOD_CLOSE_REOPEN_PERMISSION_CODE,
+} from "../../shared/periodCloseGovernance.js";
 
 function assert(condition, message) {
   if (!condition) {
@@ -24,6 +31,23 @@ function toNumber(value) {
 
 function noScopeGuard() {
   return true;
+}
+
+async function expectBadRequest(asyncFn, expectedMessageFragment) {
+  let thrown = null;
+  try {
+    await asyncFn();
+  } catch (error) {
+    thrown = error;
+  }
+  assert(thrown, "Expected workflow write to throw");
+  assert(Number(thrown?.status || 0) === 400, "Expected badRequest status 400");
+  if (expectedMessageFragment) {
+    assert(
+      String(thrown?.message || "").includes(expectedMessageFragment),
+      `Expected error message to include: ${expectedMessageFragment}`
+    );
+  }
 }
 
 async function createTenantFixture(stamp) {
@@ -320,7 +344,12 @@ async function main() {
   await assignRole({
     tenantId: fixture.tenantId,
     userId: approverUserId,
-    roleCode: "GLPostingAuthority",
+    roleCode: "GLOperator",
+  });
+  await assignRole({
+    tenantId: fixture.tenantId,
+    userId: approverUserId,
+    roleCode: "PeriodCloseSupervisorAuthority",
   });
   await enableWorkflowFeature(fixture.tenantId);
 
@@ -346,7 +375,7 @@ async function main() {
         {
           stepNo: 1,
           stageScopeType: "LEGAL_ENTITY",
-          requiredPermissionCode: "gl.period.close",
+          requiredPermissionCode: PERIOD_CLOSE_READINESS_PERMISSION_CODE,
           minApproverCount: 1,
           allowSelfApprove: false,
           escalationAfterHours: 12,
@@ -354,7 +383,7 @@ async function main() {
         {
           stepNo: 2,
           stageScopeType: "GROUP",
-          requiredPermissionCode: "gl.period.close",
+          requiredPermissionCode: PERIOD_CLOSE_APPROVE_PERMISSION_CODE,
           minApproverCount: 1,
           allowSelfApprove: false,
           escalationAfterHours: 24,
@@ -363,6 +392,128 @@ async function main() {
     },
   });
   assert(stepRows.length === 2, "Expected two workflow definition steps");
+
+  for (const invalidPermissionCode of [
+    PERIOD_CLOSE_EXECUTE_PERMISSION_CODE,
+    PERIOD_CLOSE_REOPEN_PERMISSION_CODE,
+    PERIOD_CLOSE_ADMIN_PERMISSION_CODE,
+  ]) {
+    // eslint-disable-next-line no-await-in-loop
+    await expectBadRequest(
+      () =>
+        replaceWorkflowDefinitionSteps({
+          input: {
+            tenantId: fixture.tenantId,
+            userId: requesterUserId,
+            definitionId: definition.id,
+            steps: [
+              {
+                stepNo: 1,
+                stageScopeType:
+                  invalidPermissionCode === PERIOD_CLOSE_ADMIN_PERMISSION_CODE
+                    ? "COUNTRY"
+                    : "LEGAL_ENTITY",
+                requiredPermissionCode: invalidPermissionCode,
+                minApproverCount: 1,
+                allowSelfApprove: false,
+                escalationAfterHours: 12,
+              },
+            ],
+          },
+        }),
+      "requiredPermissionCode must be one of"
+    );
+  }
+
+  await expectBadRequest(
+    () =>
+      replaceWorkflowDefinitionSteps({
+        input: {
+          tenantId: fixture.tenantId,
+          userId: requesterUserId,
+          definitionId: definition.id,
+          steps: [
+            {
+              stepNo: 1,
+              stageScopeType: "LEGAL_ENTITY",
+              requiredPermissionCode: PERIOD_CLOSE_READINESS_PERMISSION_CODE,
+              minApproverCount: 1,
+              allowSelfApprove: false,
+              escalationAfterHours: 12,
+            },
+          ],
+        },
+    }),
+    `must contain at least one ${PERIOD_CLOSE_APPROVE_PERMISSION_CODE} step`
+  );
+
+  const consolidationDefinition = await createWorkflowDefinition({
+    input: {
+      tenantId: fixture.tenantId,
+      userId: requesterUserId,
+      code: `WF_PR3E_CONS_${stamp}`,
+      name: "PR-3E Consolidation Scope Contract Test",
+      processType: "CONSOLIDATION_RUN",
+      isActive: true,
+      versionNo: 1,
+    },
+  });
+  assert(
+    toNumber(consolidationDefinition.id) > 0,
+    "Consolidation workflow definition creation failed"
+  );
+
+  const consolidationStepRows = await replaceWorkflowDefinitionSteps({
+    input: {
+      tenantId: fixture.tenantId,
+      userId: requesterUserId,
+      definitionId: consolidationDefinition.id,
+      steps: [
+        {
+          stepNo: 1,
+          stageScopeType: "LEGAL_ENTITY",
+          requiredPermissionCode: "consolidation.run.create",
+          minApproverCount: 1,
+          allowSelfApprove: false,
+          escalationAfterHours: 12,
+        },
+        {
+          stepNo: 2,
+          stageScopeType: "GROUP",
+          requiredPermissionCode: "consolidation.run.finalize",
+          minApproverCount: 1,
+          allowSelfApprove: false,
+          escalationAfterHours: 24,
+        },
+      ],
+    },
+  });
+  assert(
+    consolidationStepRows.length === 2,
+    "Consolidation workflow should accept Legal Entity preparation plus Group finalization steps"
+  );
+
+  await expectBadRequest(
+    () =>
+      replaceWorkflowDefinitionSteps({
+        input: {
+          tenantId: fixture.tenantId,
+          userId: requesterUserId,
+          definitionId: consolidationDefinition.id,
+          steps: [
+            {
+              stepNo: 1,
+              stageScopeType: "COUNTRY",
+              requiredPermissionCode: "consolidation.run.create",
+              minApproverCount: 1,
+              allowSelfApprove: false,
+              escalationAfterHours: 12,
+            },
+          ],
+        },
+      }),
+    "stageScopeType COUNTRY is not allowed for consolidation.run.create"
+  );
 
   await createWorkflowAssignment({
     req: null,
@@ -464,8 +615,8 @@ async function main() {
     instanceId: workflowInstanceId,
   });
   assert(
-    firstAccess.requiredPermissionCode === "gl.period.close",
-    "First workflow step should require gl.period.close"
+    firstAccess.requiredPermissionCode === PERIOD_CLOSE_READINESS_PERMISSION_CODE,
+    "First workflow step should require org.fiscal_period.read"
   );
   assert(
     String(firstAccess.scope.scopeType || "").toUpperCase() === "LEGAL_ENTITY" &&
@@ -496,6 +647,10 @@ async function main() {
     tenantId: fixture.tenantId,
     instanceId: workflowInstanceId,
   });
+  assert(
+    secondAccess.requiredPermissionCode === PERIOD_CLOSE_APPROVE_PERMISSION_CODE,
+    "Second workflow step should require gl.period.close.approve"
+  );
   assert(
     String(secondAccess.scope.scopeType || "").toUpperCase() === "GROUP" &&
       toNumber(secondAccess.scope.scopeId) === fixture.groupCompanyId,

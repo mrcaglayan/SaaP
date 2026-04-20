@@ -1,13 +1,46 @@
+import {
+  PERIOD_CLOSE_APPROVE_PERMISSION_CODE,
+  PERIOD_CLOSE_EXECUTE_PERMISSION_CODE,
+  PERIOD_CLOSE_READINESS_PERMISSION_CODE,
+  PERIOD_CLOSE_REOPEN_PERMISSION_CODE,
+} from "../../../shared/periodCloseGovernance.js";
+
 function normalizeText(value) {
   return String(value || "").trim();
 }
 
+function translateScopeTypeLabel(scopeType, l) {
+  const normalizedScopeType = normalizeText(scopeType).toUpperCase();
+  if (normalizedScopeType === "OPERATING_UNIT") {
+    return l("Operating Unit", "Operasyon Birimi");
+  }
+  if (normalizedScopeType === "LEGAL_ENTITY") {
+    return l("Legal Entity", "Tuzel Kisilik");
+  }
+  if (normalizedScopeType === "COUNTRY") {
+    return l("Country", "Ulke");
+  }
+  if (normalizedScopeType === "GROUP") {
+    return l("Group", "Grup");
+  }
+  if (normalizedScopeType === "TENANT") {
+    return l("Tenant", "Tenant");
+  }
+  return normalizedScopeType;
+}
+
 function getPeriodCloseAuthorityLabel(requiredPermissionCode, l) {
-  if (requiredPermissionCode === "org.fiscal_period.read") {
+  if (requiredPermissionCode === PERIOD_CLOSE_READINESS_PERMISSION_CODE) {
     return l("Review period-close readiness", "Donem kapanisi hazirligini incele");
   }
-  if (requiredPermissionCode === "gl.period.close") {
-    return l("Close periods", "Donemleri kapat");
+  if (requiredPermissionCode === PERIOD_CLOSE_APPROVE_PERMISSION_CODE) {
+    return l("Approve period close", "Donem kapanisini onayla");
+  }
+  if (requiredPermissionCode === PERIOD_CLOSE_EXECUTE_PERMISSION_CODE) {
+    return l("Execute period close", "Donem kapanisini yurut");
+  }
+  if (requiredPermissionCode === PERIOD_CLOSE_REOPEN_PERMISSION_CODE) {
+    return l("Reopen periods", "Donemleri yeniden ac");
   }
   return "";
 }
@@ -25,9 +58,53 @@ function formatCloseStatusLabel(closeStatus, l) {
 
 function resolveRequiredPermissionCode(stage) {
   if (stage === "READINESS_REVIEW" || stage === "READINESS_BLOCKED") {
-    return "org.fiscal_period.read";
+    return PERIOD_CLOSE_READINESS_PERMISSION_CODE;
   }
-  return "gl.period.close";
+  return PERIOD_CLOSE_APPROVE_PERMISSION_CODE;
+}
+
+function resolveWorkflowAssignmentScopeType(workflowGateBlock) {
+  const assignment = workflowGateBlock?.details?.assignment || null;
+  if (Number(assignment?.operatingUnitId) > 0) {
+    return "OPERATING_UNIT";
+  }
+  if (Number(assignment?.legalEntityId) > 0) {
+    return "LEGAL_ENTITY";
+  }
+  if (Number(assignment?.countryId) > 0) {
+    return "COUNTRY";
+  }
+  if (Number(assignment?.groupCompanyId) > 0) {
+    return "GROUP";
+  }
+  return "";
+}
+
+function resolveCurrentRequiredPermissionCode(stage, workflowGateBlock) {
+  const gatePermissionCode = normalizeText(workflowGateBlock?.details?.requiredPermissionCode);
+  if (
+    (stage === "CLOSE_PENDING_APPROVAL" ||
+      stage === "CLOSE_IN_PROGRESS" ||
+      stage === "CLOSE_RETRY") &&
+    gatePermissionCode
+  ) {
+    return gatePermissionCode;
+  }
+  return resolveRequiredPermissionCode(stage);
+}
+
+function resolveCurrentRequiredScopeType(stage, workflowGateBlock) {
+  const gateScopeType = normalizeText(workflowGateBlock?.details?.stageScopeType).toUpperCase();
+  if (gateScopeType) {
+    return gateScopeType;
+  }
+  if (stage === "CLOSE_PENDING_APPROVAL") {
+    const assignmentScopeType = resolveWorkflowAssignmentScopeType(workflowGateBlock);
+    if (assignmentScopeType) {
+      return assignmentScopeType;
+    }
+  }
+  return "LEGAL_ENTITY";
 }
 
 function resolveCurrentStage({ latestRun, workflowGateBlock, fxGateBlock }) {
@@ -169,12 +246,21 @@ function resolveSupportingText({
   return "";
 }
 
-function resolveCurrentStepLabel(stage, l) {
+function resolveCurrentStepLabel(stage, requiredPermissionCode, l) {
   if (stage === "READINESS_BLOCKED") {
     return l("Readiness review", "Hazirlik incelemesi");
   }
+  if (requiredPermissionCode === PERIOD_CLOSE_READINESS_PERMISSION_CODE) {
+    return l("Review readiness", "Hazirligi incele");
+  }
+  if (requiredPermissionCode === PERIOD_CLOSE_APPROVE_PERMISSION_CODE) {
+    return l("Approve workflow step", "Workflow adimini onayla");
+  }
+  if (requiredPermissionCode === PERIOD_CLOSE_EXECUTE_PERMISSION_CODE) {
+    return l("Execute close run", "Kapanis calismasini yurut");
+  }
   if (stage === "CLOSE_PENDING_APPROVAL" || stage === "CLOSE_IN_PROGRESS" || stage === "CLOSE_RETRY") {
-    return l("Approve and close", "Onayla ve kapat");
+    return l("Approve workflow step", "Workflow adimini onayla");
   }
   if (stage === "CLOSED") {
     return l("Closed", "Kapandi");
@@ -182,25 +268,37 @@ function resolveCurrentStepLabel(stage, l) {
   return l("Review readiness", "Hazirligi incele");
 }
 
-function resolveEligibleActorSummary(stage, requiredAuthorityLabel, l) {
-  if (!requiredAuthorityLabel) {
+function resolveEligibleActorSummary(
+  requiredPermissionCode,
+  requiredAuthorityLabel,
+  requiredScopeLabel,
+  l
+) {
+  if (!requiredAuthorityLabel || !requiredScopeLabel) {
     return "";
   }
-  if (stage === "READINESS_BLOCKED" || stage === "READINESS_REVIEW") {
+  if (requiredPermissionCode === PERIOD_CLOSE_READINESS_PERMISSION_CODE) {
     return l(
-      `Users assigned ${requiredAuthorityLabel} at Legal Entity scope can review readiness inputs before close authority is used.`,
-      `Legal Entity kapsaminda ${requiredAuthorityLabel} atanan kullanicilar, kapanis yetkisi kullanilmadan once hazirlik girdilerini gozden gecirebilir.`
+      `Users assigned ${requiredAuthorityLabel} at ${requiredScopeLabel} scope can review readiness inputs before close authority is used.`,
+      `${requiredScopeLabel} kapsaminda ${requiredAuthorityLabel} atanan kullanicilar, kapanis yetkisi kullanilmadan once hazirlik girdilerini gozden gecirebilir.`
+    );
+  }
+  if (requiredPermissionCode === PERIOD_CLOSE_APPROVE_PERMISSION_CODE) {
+    return l(
+      `Users assigned ${requiredAuthorityLabel} at ${requiredScopeLabel} scope can approve the workflow step before execution starts.`,
+      `${requiredScopeLabel} kapsaminda ${requiredAuthorityLabel} atanan kullanicilar, icra baslamadan once workflow adimini onaylayabilir.`
     );
   }
   return l(
-    `Users assigned ${requiredAuthorityLabel} at Legal Entity scope can complete the final period close action.`,
-    `Legal Entity kapsaminda ${requiredAuthorityLabel} atanan kullanicilar son donem kapanisi aksiyonunu tamamlayabilir.`
+    `Users assigned ${requiredAuthorityLabel} at ${requiredScopeLabel} scope can execute the final governed period close action.`,
+    `${requiredScopeLabel} kapsaminda ${requiredAuthorityLabel} atanan kullanicilar yonetilen nihai donem kapanisi aksiyonunu yurutebilir.`
   );
 }
 
 function buildUserCapabilityLines({
   stage,
   canClosePeriod,
+  canReadPeriods = false,
   canReopenPeriod = false,
   canReadTrialBalance,
   canReadJournals,
@@ -208,22 +306,57 @@ function buildUserCapabilityLines({
   closeButtonDisabledReason,
   workflowGateBlock,
   latestRun,
+  currentRequiredPermissionCode = "",
+  requiredAuthorityLabel = "",
+  requiredScopeLabel = "",
   l,
 }) {
   const lines = [];
 
   if (!canClosePeriod) {
-    lines.push(
-      canReadTrialBalance || canReadJournals
-        ? l(
-            "You can inspect readiness inputs on this workbench, but you cannot close the period from your current authority.",
-            "Bu ekranda hazirlik girdilerini inceleyebilirsiniz, ancak mevcut yetkinizle donemi kapatamazsiniz."
-          )
-        : l(
-            "You cannot close this period from your current role mix.",
-            "Mevcut rol karisiminizle bu donemi kapatamazsiniz."
-          )
-    );
+    if (
+      currentRequiredPermissionCode === PERIOD_CLOSE_READINESS_PERMISSION_CODE &&
+      (canReadPeriods || canReadTrialBalance || canReadJournals)
+    ) {
+      lines.push(
+        requiredAuthorityLabel && requiredScopeLabel
+          ? l(
+              `This workflow is waiting for ${requiredAuthorityLabel} at ${requiredScopeLabel} scope. You can review readiness here, but final close remains separate.`,
+              `Bu workflow, ${requiredScopeLabel} kapsaminda ${requiredAuthorityLabel} bekliyor. Hazirligi burada inceleyebilirsiniz, ancak nihai kapanis ayridir.`
+            )
+          : l(
+              "This workflow is waiting for readiness review. You can review readiness here, but final close remains separate.",
+              "Bu workflow hazirlik incelemesini bekliyor. Hazirligi burada inceleyebilirsiniz, ancak nihai kapanis ayridir."
+            )
+      );
+    } else if (
+      currentRequiredPermissionCode === PERIOD_CLOSE_APPROVE_PERMISSION_CODE &&
+      (canReadPeriods || canReadTrialBalance || canReadJournals)
+    ) {
+      lines.push(
+        requiredAuthorityLabel && requiredScopeLabel
+          ? l(
+              `This workflow is waiting for ${requiredAuthorityLabel} at ${requiredScopeLabel} scope. You can inspect readiness here, but execution remains separate.`,
+              `Bu workflow, ${requiredScopeLabel} kapsaminda ${requiredAuthorityLabel} bekliyor. Hazirligi burada inceleyebilirsiniz, ancak icra ayridir.`
+            )
+          : l(
+              "This workflow is waiting for approval. You can inspect readiness here, but execution remains separate.",
+              "Bu workflow onay bekliyor. Hazirligi burada inceleyebilirsiniz, ancak icra ayridir."
+            )
+      );
+    } else {
+      lines.push(
+        canReadTrialBalance || canReadJournals
+          ? l(
+              "You can inspect readiness inputs on this workbench, but you cannot close the period from your current authority.",
+              "Bu ekranda hazirlik girdilerini inceleyebilirsiniz, ancak mevcut yetkinizle donemi kapatamazsiniz."
+            )
+          : l(
+              "You cannot close this period from your current role mix.",
+              "Mevcut rol karisiminizle bu donemi kapatamazsiniz."
+            )
+      );
+    }
     return lines;
   }
 
@@ -256,22 +389,54 @@ function buildUserCapabilityLines({
     if (errorCode === "WORKFLOW_NOT_ASSIGNED") {
       lines.push(
         l(
-          "You have close authority, but no active workflow assignment is configured for this scope.",
-          "Kapanis yetkiniz var, ancak bu kapsam icin aktif workflow atamasi yok."
+          "No active workflow assignment is configured for this scope, so period close cannot complete.",
+          "Bu kapsam icin aktif workflow atamasi yok; bu nedenle donem kapanisi tamamlanamaz."
         )
       );
     } else if (errorCode === "APPROVAL_INSTANCE_REJECTED") {
       lines.push(
         l(
-          "You have close authority, but the workflow instance was rejected and must be corrected before close can finish.",
-          "Kapanis yetkiniz var, ancak workflow instance reddedildi; kapanis bitmeden once duzeltilmelidir."
+          "The workflow instance was rejected and must be corrected before close can finish.",
+          "Workflow instance reddedildi; kapanis bitmeden once duzeltilmelidir."
+        )
+      );
+    } else if (
+      currentRequiredPermissionCode === PERIOD_CLOSE_READINESS_PERMISSION_CODE &&
+      requiredAuthorityLabel &&
+      requiredScopeLabel
+    ) {
+      lines.push(
+        l(
+          `Workflow approval is waiting for ${requiredAuthorityLabel} at ${requiredScopeLabel} scope before close can continue.`,
+          `Workflow onayi, kapanis devam etmeden once ${requiredScopeLabel} kapsaminda ${requiredAuthorityLabel} bekliyor.`
+        )
+      );
+    } else if (requiredAuthorityLabel && requiredScopeLabel) {
+      lines.push(
+        l(
+          `Workflow approval is still pending for ${requiredAuthorityLabel} at ${requiredScopeLabel} scope.`,
+          `Workflow onayi, ${requiredScopeLabel} kapsaminda ${requiredAuthorityLabel} icin hala beklemede.`
+        )
+      );
+    } else if (currentRequiredPermissionCode === PERIOD_CLOSE_READINESS_PERMISSION_CODE) {
+      lines.push(
+        l(
+          "Workflow approval is waiting for readiness review before close can continue.",
+          "Workflow onayi, kapanis devam etmeden once hazirlik incelemesini bekliyor."
+        )
+      );
+    } else if (currentRequiredPermissionCode === PERIOD_CLOSE_APPROVE_PERMISSION_CODE) {
+      lines.push(
+        l(
+          "Workflow approval is still pending before execution can continue.",
+          "Icra devam etmeden once workflow onayi hala beklemede."
         )
       );
     } else {
       lines.push(
         l(
-          "You have close authority, but workflow approval is still pending for this period close run.",
-          "Kapanis yetkiniz var, ancak bu donem kapanis calismasi icin workflow onayi hala beklemede."
+          "Workflow approval is still pending for this period close run.",
+          "Bu donem kapanis calismasi icin workflow onayi hala beklemede."
         )
       );
     }
@@ -282,15 +447,15 @@ function buildUserCapabilityLines({
     if (canReopenPeriod) {
       lines.push(
         l(
-          "This period is already closed. You have Period Close / Reopen authority and can reopen it before running another close cycle.",
-          "Bu donem zaten kapali. Period Close / Reopen yetkiniz var; yeni bir kapanis dongusu calistirmadan once yeniden acabilirsiniz."
+          "This period is already closed. You have reopen authority and can reopen it before running another close cycle.",
+          "Bu donem zaten kapali. Yeniden acma yetkiniz var; yeni bir kapanis dongusu calistirmadan once yeniden acabilirsiniz."
         )
       );
     } else {
       lines.push(
         l(
-          "This period is already closed. You do not have Period Close / Reopen authority. Ask someone with gl.period.reopen permission to reopen it.",
-          "Bu donem zaten kapali. Period Close / Reopen yetkiniz yok. gl.period.reopen yetkisine sahip birinden yeniden acmasini isteyin."
+          `This period is already closed. You do not have reopen authority. Ask someone with ${PERIOD_CLOSE_REOPEN_PERMISSION_CODE} permission to reopen it.`,
+          `Bu donem zaten kapali. Yeniden acma yetkiniz yok. ${PERIOD_CLOSE_REOPEN_PERMISSION_CODE} yetkisine sahip birinden yeniden acmasini isteyin.`
         )
       );
     }
@@ -381,8 +546,8 @@ export function buildPeriodCloseRunDisabledReason({
   }
   if (!canClosePeriod) {
     return l(
-      "you do not have Period Close / Approve & Close authority on this screen",
-      "bu ekranda Period Close / Approve & Close yetkiniz yok"
+      "you do not have period-close execution authority on this screen",
+      "bu ekranda donem kapanisi icra yetkiniz yok"
     );
   }
   if (!normalizeText(bookId) || !normalizeText(fiscalPeriodId)) {
@@ -406,6 +571,7 @@ export function buildPeriodCloseRuntimeExplainabilityModel({
   workflowGateBlock = null,
   fxGateBlock = null,
   canClosePeriod = false,
+  canReadPeriods = false,
   canReopenPeriod = false,
   canReadTrialBalance = false,
   canReadJournals = false,
@@ -423,8 +589,18 @@ export function buildPeriodCloseRuntimeExplainabilityModel({
     workflowGateBlock,
     fxGateBlock,
   });
-  const requiredPermissionCode = resolveRequiredPermissionCode(stage);
-  const requiredAuthorityLabel = getPeriodCloseAuthorityLabel(requiredPermissionCode, l);
+  const currentRequiredPermissionCode = resolveCurrentRequiredPermissionCode(
+    stage,
+    workflowGateBlock
+  );
+  const requiredScopeLabel = translateScopeTypeLabel(
+    resolveCurrentRequiredScopeType(stage, workflowGateBlock),
+    l
+  );
+  const requiredAuthorityLabel = getPeriodCloseAuthorityLabel(
+    currentRequiredPermissionCode,
+    l
+  );
   const requestedCloseStatusLabel = formatCloseStatusLabel(requestedCloseStatus, l);
   const technicalItems = [];
 
@@ -458,6 +634,29 @@ export function buildPeriodCloseRuntimeExplainabilityModel({
       value: normalizeText(workflowGateBlock?.requestId || fxGateBlock?.requestId),
     });
   }
+  if (Number(workflowGateBlock?.details?.currentStepNo || workflowGateBlock?.details?.instance?.currentStepNo) > 0) {
+    technicalItems.push({
+      label: l("Workflow step", "Workflow adimi"),
+      value: String(
+        Number(
+          workflowGateBlock?.details?.currentStepNo ||
+            workflowGateBlock?.details?.instance?.currentStepNo
+        )
+      ),
+    });
+  }
+  if (normalizeText(workflowGateBlock?.details?.stageScopeType)) {
+    technicalItems.push({
+      label: l("Current approval scope", "Guncel onay kapsami"),
+      value: translateScopeTypeLabel(workflowGateBlock.details.stageScopeType, l),
+    });
+  }
+  if (normalizeText(workflowGateBlock?.details?.requiredPermissionCode)) {
+    technicalItems.push({
+      label: l("Current approval permission", "Guncel onay yetkisi"),
+      value: normalizeText(workflowGateBlock.details.requiredPermissionCode),
+    });
+  }
 
   return {
     tone: resolveTone(stage),
@@ -470,13 +669,19 @@ export function buildPeriodCloseRuntimeExplainabilityModel({
       fxGateBlock,
       latestRun,
     }),
-    currentStepLabel: resolveCurrentStepLabel(stage, l),
+    currentStepLabel: resolveCurrentStepLabel(stage, currentRequiredPermissionCode, l),
     requiredAuthorityLabel,
-    requiredScopeLabel: l("Legal Entity", "Tuzel Kisilik"),
-    eligibleActorSummary: resolveEligibleActorSummary(stage, requiredAuthorityLabel, l),
+    requiredScopeLabel,
+    eligibleActorSummary: resolveEligibleActorSummary(
+      currentRequiredPermissionCode,
+      requiredAuthorityLabel,
+      requiredScopeLabel,
+      l
+    ),
     userCapabilityLines: buildUserCapabilityLines({
       stage,
       canClosePeriod,
+      canReadPeriods,
       canReopenPeriod,
       canReadTrialBalance,
       canReadJournals,
@@ -484,6 +689,9 @@ export function buildPeriodCloseRuntimeExplainabilityModel({
       closeButtonDisabledReason,
       workflowGateBlock,
       latestRun,
+      currentRequiredPermissionCode,
+      requiredAuthorityLabel,
+      requiredScopeLabel,
       l,
     }),
     noteItems: [
@@ -496,8 +704,8 @@ export function buildPeriodCloseRuntimeExplainabilityModel({
                 "Hazirlik incelemesi, nihai kapanis aksiyonundan ayridir. Bu yuzey iki asamayi da acikca gosterir."
               )
             : l(
-                "Period close uses gl.period.close for final close and gl.period.reopen for reopen authority. The package-first model splits these into gl.period.close and PKG-PC-REOPEN.",
-                "Donem kapanisi, nihai kapanis icin gl.period.close ve yeniden acma icin gl.period.reopen kullanir. Paket modeli bunlari gl.period.close ve PKG-PC-REOPEN olarak ayirir."
+                `Workflow approval uses ${PERIOD_CLOSE_APPROVE_PERMISSION_CODE}, execution uses ${PERIOD_CLOSE_EXECUTE_PERMISSION_CODE}, and reopen stays on ${PERIOD_CLOSE_REOPEN_PERMISSION_CODE}.`,
+                `Workflow onayi ${PERIOD_CLOSE_APPROVE_PERMISSION_CODE}, icra ${PERIOD_CLOSE_EXECUTE_PERMISSION_CODE} ve yeniden acma ${PERIOD_CLOSE_REOPEN_PERMISSION_CODE} ile yonetilir.`
               ),
       },
       {

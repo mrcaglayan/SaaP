@@ -3,6 +3,14 @@ import { createClient } from "redis";
 import { query } from "../db.js";
 import { logWarn } from "../observability/logger.js";
 import { badRequest, parsePositiveInt, resolveTenantId } from "../routes/_utils.js";
+import {
+  PERIOD_CLOSE_ADMIN_PERMISSION_CODE,
+  PERIOD_CLOSE_APPROVE_PERMISSION_CODE,
+  PERIOD_CLOSE_EXECUTE_PERMISSION_CODE,
+  PERIOD_CLOSE_READINESS_PERMISSION_CODE,
+  PERIOD_CLOSE_REOPEN_PERMISSION_CODE,
+  PERIOD_CLOSE_VIEW_PERMISSION_CODES,
+} from "../../../shared/periodCloseGovernance.js";
 export const VALID_AUTHZ_SCOPE_TYPES = new Set([
   "TENANT",
   "GROUP",
@@ -1442,7 +1450,165 @@ export async function checkUserHasPermissionAtScope(
   if (bundle?.missingPermission || !bundle?.permissionScopeContext) {
     return false;
   }
-  return isScopeAllowed(bundle.permissionScopeContext, requestedScope);}
+  return isScopeAllowed(bundle.permissionScopeContext, requestedScope);
+}
+
+/**
+ * Check whether one user holds any permission from a set at one concrete org
+ * scope.
+ */
+export async function checkUserHasAnyPermissionAtScope(
+  userId,
+  tenantId,
+  permissionCodes,
+  scopeType,
+  scopeId,
+  runQueryOrOptions = query
+) {
+  const normalizedPermissionCodes = Array.from(
+    new Set(
+      (Array.isArray(permissionCodes) ? permissionCodes : [])
+        .map((permissionCode) => String(permissionCode || "").trim())
+        .filter(Boolean)
+    )
+  );
+  for (const permissionCode of normalizedPermissionCodes) {
+    // eslint-disable-next-line no-await-in-loop
+    const hasPermission = await checkUserHasPermissionAtScope(
+      userId,
+      tenantId,
+      permissionCode,
+      scopeType,
+      scopeId,
+      runQueryOrOptions
+    );
+    if (hasPermission) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Check readiness-review access for one period-close scope.
+ */
+export async function checkUserCanReviewPeriodCloseAtScope(
+  userId,
+  tenantId,
+  scopeType,
+  scopeId,
+  runQueryOrOptions = query
+) {
+  return checkUserHasPermissionAtScope(
+    userId,
+    tenantId,
+    PERIOD_CLOSE_READINESS_PERMISSION_CODE,
+    scopeType,
+    scopeId,
+    runQueryOrOptions
+  );
+}
+
+/**
+ * Check workflow-approval access for one period-close scope.
+ */
+export async function checkUserCanApprovePeriodCloseAtScope(
+  userId,
+  tenantId,
+  scopeType,
+  scopeId,
+  runQueryOrOptions = query
+) {
+  return checkUserHasPermissionAtScope(
+    userId,
+    tenantId,
+    PERIOD_CLOSE_APPROVE_PERMISSION_CODE,
+    scopeType,
+    scopeId,
+    runQueryOrOptions
+  );
+}
+
+/**
+ * Check governed period-close execution access for one scope.
+ */
+export async function checkUserCanExecutePeriodCloseAtScope(
+  userId,
+  tenantId,
+  scopeType,
+  scopeId,
+  runQueryOrOptions = query
+) {
+  return checkUserHasPermissionAtScope(
+    userId,
+    tenantId,
+    PERIOD_CLOSE_EXECUTE_PERMISSION_CODE,
+    scopeType,
+    scopeId,
+    runQueryOrOptions
+  );
+}
+
+/**
+ * Check period-reopen access for one scope.
+ */
+export async function checkUserCanReopenPeriodCloseAtScope(
+  userId,
+  tenantId,
+  scopeType,
+  scopeId,
+  runQueryOrOptions = query
+) {
+  return checkUserHasPermissionAtScope(
+    userId,
+    tenantId,
+    PERIOD_CLOSE_REOPEN_PERMISSION_CODE,
+    scopeType,
+    scopeId,
+    runQueryOrOptions
+  );
+}
+
+/**
+ * Check period-close admin access for one scope.
+ */
+export async function checkUserCanAdministerPeriodCloseAtScope(
+  userId,
+  tenantId,
+  scopeType,
+  scopeId,
+  runQueryOrOptions = query
+) {
+  return checkUserHasPermissionAtScope(
+    userId,
+    tenantId,
+    PERIOD_CLOSE_ADMIN_PERMISSION_CODE,
+    scopeType,
+    scopeId,
+    runQueryOrOptions
+  );
+}
+
+/**
+ * Check whether one user can view any period-close governance surface at one
+ * scope.
+ */
+export async function checkUserCanViewPeriodCloseAtScope(
+  userId,
+  tenantId,
+  scopeType,
+  scopeId,
+  runQueryOrOptions = query
+) {
+  return checkUserHasAnyPermissionAtScope(
+    userId,
+    tenantId,
+    PERIOD_CLOSE_VIEW_PERMISSION_CODES,
+    scopeType,
+    scopeId,
+    runQueryOrOptions
+  );
+}
 /**
  * Find users who currently hold one permission at one concrete org scope.
  */

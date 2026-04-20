@@ -1,3 +1,12 @@
+import {
+  PERIOD_CLOSE_ADMIN_PERMISSION_CODE,
+  PERIOD_CLOSE_APPROVE_PERMISSION_CODE,
+  PERIOD_CLOSE_EXECUTE_PERMISSION_CODE,
+  PERIOD_CLOSE_READINESS_PERMISSION_CODE,
+  PERIOD_CLOSE_REOPEN_PERMISSION_CODE,
+  PERIOD_CLOSE_VIEW_PERMISSION_CODES,
+} from "../../../shared/periodCloseGovernance.js";
+
 const VALID_SCOPE_TYPES = new Set([
   "TENANT",
   "GROUP",
@@ -252,4 +261,232 @@ export function evaluatePermissionAccess(
     requestedScope: primaryRequestedScope,
     status: "wrong_scope",
   };
+}
+
+function buildMissingPermissionAccess(code, options = {}) {
+  const requestedScopes = normalizeRequestedScopes(options);
+  return {
+    code,
+    allowed: false,
+    hasPermission: false,
+    missingPermission: true,
+    wrongScope: false,
+    visibilityNarrowed: false,
+    scopeChecked: requestedScopes.length > 0,
+    requestedScopes,
+    requestedScope: requestedScopes[0] || null,
+    status: "missing_permission",
+  };
+}
+
+function evaluatePermissionAccessWith(getPermissionAccess, permissionCode, options = {}) {
+  if (typeof getPermissionAccess !== "function") {
+    return buildMissingPermissionAccess(permissionCode, options);
+  }
+  return getPermissionAccess(permissionCode, options);
+}
+
+function evaluateAnyPermissionAccessWith(
+  getPermissionAccess,
+  permissionCodes,
+  options = {}
+) {
+  const normalizedPermissionCodes = Array.from(
+    new Set(
+      (Array.isArray(permissionCodes) ? permissionCodes : [])
+        .map((permissionCode) => normalizePermissionCode(permissionCode))
+        .filter(Boolean)
+    )
+  );
+  const entries = normalizedPermissionCodes.map((permissionCode) =>
+    evaluatePermissionAccessWith(getPermissionAccess, permissionCode, options)
+  );
+  const allowedEntry = entries.find((entry) => entry?.allowed) || null;
+  const requestedScopes = normalizeRequestedScopes(options);
+  const requestedScope = requestedScopes[0] || null;
+
+  if (allowedEntry) {
+    return {
+      ...allowedEntry,
+      code: allowedEntry.code || normalizedPermissionCodes[0] || "",
+      anyPermissionCodes: normalizedPermissionCodes,
+      matchedPermissionCode: allowedEntry.code || "",
+      entries,
+      requestedScopes,
+      requestedScope,
+    };
+  }
+
+  return {
+    code: normalizedPermissionCodes[0] || "",
+    allowed: false,
+    hasPermission: entries.some((entry) => entry?.hasPermission),
+    missingPermission: entries.every((entry) => entry?.missingPermission),
+    wrongScope:
+      entries.some((entry) => entry?.wrongScope) &&
+      !entries.some((entry) => entry?.allowed),
+    visibilityNarrowed: entries.some((entry) => entry?.visibilityNarrowed),
+    scopeChecked: requestedScopes.length > 0,
+    requestedScopes,
+    requestedScope,
+    status: entries.some((entry) => entry?.wrongScope)
+      ? "wrong_scope"
+      : "missing_permission",
+    anyPermissionCodes: normalizedPermissionCodes,
+    matchedPermissionCode: "",
+    entries,
+  };
+}
+
+/**
+ * Evaluate scoped readiness access for period-close review surfaces.
+ */
+export function getPeriodCloseReviewAccess(getPermissionAccess, options = {}) {
+  return evaluatePermissionAccessWith(
+    getPermissionAccess,
+    PERIOD_CLOSE_READINESS_PERMISSION_CODE,
+    options
+  );
+}
+
+/**
+ * Evaluate scoped workflow-approval access for period close.
+ */
+export function getPeriodCloseApprovalAccess(getPermissionAccess, options = {}) {
+  return evaluatePermissionAccessWith(
+    getPermissionAccess,
+    PERIOD_CLOSE_APPROVE_PERMISSION_CODE,
+    options
+  );
+}
+
+/**
+ * Evaluate scoped execution access for the governed close run.
+ */
+export function getPeriodCloseExecutionAccess(getPermissionAccess, options = {}) {
+  return evaluatePermissionAccessWith(
+    getPermissionAccess,
+    PERIOD_CLOSE_EXECUTE_PERMISSION_CODE,
+    options
+  );
+}
+
+/**
+ * Evaluate scoped reopen access for period-close repair actions.
+ */
+export function getPeriodCloseReopenAccess(getPermissionAccess, options = {}) {
+  return evaluatePermissionAccessWith(
+    getPermissionAccess,
+    PERIOD_CLOSE_REOPEN_PERMISSION_CODE,
+    options
+  );
+}
+
+/**
+ * Evaluate scoped admin access for exceptional period-close controls.
+ */
+export function getPeriodCloseAdminAccess(getPermissionAccess, options = {}) {
+  return evaluatePermissionAccessWith(
+    getPermissionAccess,
+    PERIOD_CLOSE_ADMIN_PERMISSION_CODE,
+    options
+  );
+}
+
+/**
+ * Evaluate whether the current user can view period-close context at all.
+ */
+export function getPeriodCloseViewAccess(getPermissionAccess, options = {}) {
+  return evaluateAnyPermissionAccessWith(
+    getPermissionAccess,
+    PERIOD_CLOSE_VIEW_PERMISSION_CODES,
+    options
+  );
+}
+
+/**
+ * Check whether the current session carries readiness-review permission.
+ */
+export function hasPeriodCloseReviewPermission(hasPermission) {
+  return Boolean(
+    typeof hasPermission === "function" &&
+      hasPermission(PERIOD_CLOSE_READINESS_PERMISSION_CODE)
+  );
+}
+
+/**
+ * Check whether the current session carries workflow-approval permission.
+ */
+export function hasPeriodCloseApprovalPermission(hasPermission) {
+  return Boolean(
+    typeof hasPermission === "function" &&
+      hasPermission(PERIOD_CLOSE_APPROVE_PERMISSION_CODE)
+  );
+}
+
+/**
+ * Check whether the current session carries period-close execution permission.
+ */
+export function hasPeriodCloseExecutionPermission(hasPermission) {
+  return Boolean(
+    typeof hasPermission === "function" &&
+      hasPermission(PERIOD_CLOSE_EXECUTE_PERMISSION_CODE)
+  );
+}
+
+/**
+ * Check whether the current session carries period-reopen permission.
+ */
+export function hasPeriodCloseReopenPermission(hasPermission) {
+  return Boolean(
+    typeof hasPermission === "function" &&
+      hasPermission(PERIOD_CLOSE_REOPEN_PERMISSION_CODE)
+  );
+}
+
+/**
+ * Check whether the current session can view any period-close governance surface.
+ */
+export function hasAnyPeriodCloseViewPermission(hasPermission) {
+  return Boolean(
+    typeof hasPermission === "function" &&
+      PERIOD_CLOSE_VIEW_PERMISSION_CODES.some((permissionCode) =>
+        hasPermission(permissionCode)
+      )
+  );
+}
+
+/**
+ * Return one user-facing missing-permission message for a period-close action.
+ */
+export function getPeriodCloseMissingPermissionMessage(action, l = (en) => en) {
+  const normalizedAction = String(action || "").trim().toLowerCase();
+  if (normalizedAction === "review") {
+    return l(
+      `Missing permission: ${PERIOD_CLOSE_READINESS_PERMISSION_CODE}`,
+      `Eksik yetki: ${PERIOD_CLOSE_READINESS_PERMISSION_CODE}`
+    );
+  }
+  if (normalizedAction === "approve") {
+    return l(
+      `Missing permission: ${PERIOD_CLOSE_APPROVE_PERMISSION_CODE}`,
+      `Eksik yetki: ${PERIOD_CLOSE_APPROVE_PERMISSION_CODE}`
+    );
+  }
+  if (normalizedAction === "execute") {
+    return l(
+      `Missing permission: ${PERIOD_CLOSE_EXECUTE_PERMISSION_CODE}`,
+      `Eksik yetki: ${PERIOD_CLOSE_EXECUTE_PERMISSION_CODE}`
+    );
+  }
+  if (normalizedAction === "reopen") {
+    return l(
+      `Missing permission: ${PERIOD_CLOSE_REOPEN_PERMISSION_CODE}`,
+      `Eksik yetki: ${PERIOD_CLOSE_REOPEN_PERMISSION_CODE}`
+    );
+  }
+  return l(
+    "Missing period-close governance permission.",
+    "Eksik donem kapanisi yonetisim yetkisi."
+  );
 }

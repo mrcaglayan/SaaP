@@ -47,7 +47,12 @@ import {
 import {
   assertValidPermissionRuleSet,
   evaluatePermissionRuleSet,
+  RETIRED_PERMISSION_CODES,
 } from "../constants/permission-rules.js";
+import {
+  PERIOD_CLOSE_EXECUTE_PERMISSION_CODE,
+  rolePermissionSetIncludesPeriodCloseExecute,
+} from "../../../shared/periodCloseGovernance.js";
 
 const router = express.Router();
 
@@ -759,6 +764,62 @@ function validateRolePermissionSetOrThrow(roleCode, permissionCodes) {
   });
 }
 
+async function assertRolePermissionSetDoesNotEnableGroupPeriodCloseExecute({
+  tenantId,
+  roleId,
+  roleCode,
+  permissionCodes,
+  runQuery = query,
+}) {
+  if (!rolePermissionSetIncludesPeriodCloseExecute(permissionCodes)) {
+    return;
+  }
+
+  const assignmentResult = await runQuery(
+    `SELECT id
+     FROM user_role_scopes
+     WHERE tenant_id = ?
+       AND role_id = ?
+       AND scope_type = 'GROUP'
+       AND effect = 'ALLOW'
+     ORDER BY id ASC
+     LIMIT 1`,
+    [tenantId, roleId],
+  );
+  if (!assignmentResult.rows?.[0]?.id) {
+    return;
+  }
+
+  throw badRequest(
+    `Role ${roleCode || roleId} cannot grant ${PERIOD_CLOSE_EXECUTE_PERMISSION_CODE} while it is assigned at GROUP scope.`,
+  );
+}
+
+async function assertRoleAssignmentDoesNotEnableGroupPeriodCloseExecute({
+  tenantId,
+  roleId,
+  roleCode,
+  scopeType,
+  effect,
+  runQuery = query,
+}) {
+  if (
+    String(scopeType || "").trim().toUpperCase() !== "GROUP" ||
+    String(effect || "").trim().toUpperCase() !== "ALLOW"
+  ) {
+    return;
+  }
+
+  const permissionCodes = await loadRolePermissionCodes(roleId, runQuery);
+  if (!rolePermissionSetIncludesPeriodCloseExecute(permissionCodes)) {
+    return;
+  }
+
+  throw badRequest(
+    `Role ${roleCode || roleId} grants ${PERIOD_CLOSE_EXECUTE_PERMISSION_CODE} and cannot be assigned at GROUP scope.`,
+  );
+}
+
 function summarizeCompanionRoleAssignmentResult(result) {
   return {
     companionRoleCodes: normalizeRoleCodeList(result?.companionRoleCodes),
@@ -1197,6 +1258,14 @@ async function createLocalUserAdminAssignment({
       allowedSystemRoleCodes: LOCAL_USER_ADMIN_ROLE_CODES,
     });
     assertRoleAssignmentUpsertAllowed(role);
+    await assertRoleAssignmentDoesNotEnableGroupPeriodCloseExecute({
+      tenantId,
+      roleId: parsePositiveInt(role.id),
+      roleCode: role.code,
+      scopeType: normalizedScopeType,
+      effect: "ALLOW",
+      runQuery: tx.query,
+    });
 
     const existingUser = await lookupUserByEmail(normalizedEmail, tx.query);
     const existingUserId = parsePositiveInt(existingUser?.id);
@@ -1526,7 +1595,9 @@ router.get(
     );
 
     return res.json({
-      rows: result.rows,
+      rows: (result.rows || []).filter(
+        (row) => !RETIRED_PERMISSION_CODES.includes(String(row?.code || "").trim()),
+      ),
     });
   }),
 );
@@ -2177,6 +2248,12 @@ router.post(
       role.code,
       nextPermissionCodes,
     );
+    await assertRolePermissionSetDoesNotEnableGroupPeriodCloseExecute({
+      tenantId,
+      roleId,
+      roleCode: role.code,
+      permissionCodes: nextPermissionCodes,
+    });
 
     await withTransaction(async (tx) => {
       for (const permissionCode of permissionCodes) {
@@ -2242,6 +2319,12 @@ router.put(
       role.code,
       normalizedPermissionCodes,
     );
+    await assertRolePermissionSetDoesNotEnableGroupPeriodCloseExecute({
+      tenantId,
+      roleId,
+      roleCode: role.code,
+      permissionCodes: normalizedPermissionCodes,
+    });
 
     const beforeCodes = await withTransaction(async (tx) => {
       const beforeResult = await tx.query(
@@ -2406,6 +2489,13 @@ router.post(
     assertRoleAssignmentUpsertAllowed(role);
     assertBusinessRoleLabelRoleRetired(role);
     await assertScopeTargetExists(tenantId, scopeType, scopeId);
+    await assertRoleAssignmentDoesNotEnableGroupPeriodCloseExecute({
+      tenantId,
+      roleId,
+      roleCode: role.code,
+      scopeType,
+      effect,
+    });
 
     const operation = await withTransaction(async (tx) => {
       const existingResult = await tx.query(
@@ -2601,6 +2691,13 @@ router.put(
     }
     await assertSystemRoleManageAllowed(req, tenantId, role);
     assertRoleAssignmentUpsertAllowed(role);
+    await assertRoleAssignmentDoesNotEnableGroupPeriodCloseExecute({
+      tenantId,
+      roleId: assignment.role_id,
+      roleCode: role.code,
+      scopeType,
+      effect,
+    });
     const effectiveDates = resolveAssignmentEffectiveDates(
       req.body,
       assignment,

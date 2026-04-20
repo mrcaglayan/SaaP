@@ -4,7 +4,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   listWorkflowAuthorityDefinitions,
-  listWorkflowPresetCatalogEntries,
 } from "../../frontend/src/pages/security/roleCatalog.js";
 import {
   buildStepDrafts,
@@ -13,6 +12,10 @@ import {
   listWorkflowStepAuthorityOptions,
 } from "../../frontend/src/pages/settings/workflows/utils/workflowSetupHelpers.js";
 import { getApWorkflowRequiredPermissionCode } from "../../shared/cariDocumentWorkflowGovernance.js";
+import {
+  PERIOD_CLOSE_APPROVE_PERMISSION_CODE,
+  PERIOD_CLOSE_READINESS_PERMISSION_CODE,
+} from "../../shared/periodCloseGovernance.js";
 
 function l(en) {
   return en;
@@ -39,7 +42,7 @@ async function main() {
     "utf8"
   );
 
-  const workflowPresetEntries = listWorkflowPresetCatalogEntries();
+  const workflowPresetEntries = [];
   const localCloseCatalogContext = {
     workflowAuthorityEntries: listWorkflowAuthorityDefinitions("LOCAL_CLOSE_PACK"),
     workflowPresetEntries,
@@ -80,6 +83,10 @@ async function main() {
     processType: "CONSOLIDATION_RUN",
     workflowAuthorityEntries: listWorkflowAuthorityDefinitions("CONSOLIDATION_RUN"),
   });
+  const periodCloseAuthorityOptions = listWorkflowStepAuthorityOptions({
+    processType: "PERIOD_CLOSE",
+    workflowAuthorityEntries: listWorkflowAuthorityDefinitions("PERIOD_CLOSE"),
+  });
 
   assert.equal(
     Object.prototype.hasOwnProperty.call(localCloseDrafts[0], "requiredPackageCode"),
@@ -93,7 +100,7 @@ async function main() {
   );
   assert.equal(
     localCloseDrafts[0].actionLabel,
-    "Review",
+    "Review Local Close",
     "UI-3B should infer a readable action label for bridged workflow steps"
   );
   assert.equal(
@@ -137,6 +144,14 @@ async function main() {
     true,
     "UI-3B should include actionable family authorities in the editable step-builder options"
   );
+  assert.deepEqual(
+    periodCloseAuthorityOptions.map((entry) => entry.primaryPermissionCode),
+    [
+      PERIOD_CLOSE_READINESS_PERMISSION_CODE,
+      PERIOD_CLOSE_APPROVE_PERMISSION_CODE,
+    ],
+    "UI-3B should offer only readiness and approval authorities for PERIOD_CLOSE workflow steps"
+  );
 
   const invalidApValidation = buildWorkflowStepValidationModel({
     processType: "AP_DOCUMENT_POSTING",
@@ -179,6 +194,10 @@ async function main() {
       workflowSetupPageSource.includes("workflowStepAuthorityOptions") &&
       workflowSetupPageSource.includes("workflowStepCatalogContext"),
     "WorkflowSetupPage should load authority and preset catalog metadata for the step builder"
+  );
+  assert(
+    workflowSetupPageSource.includes("PERIOD_CLOSE_APPROVAL"),
+    "WorkflowSetupPage should default new PERIOD_CLOSE steps to approval rather than execution"
   );
 
   assert(

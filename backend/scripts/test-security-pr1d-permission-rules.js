@@ -23,7 +23,7 @@ function expectThrow(fn, expectedCode) {
 async function main() {
   assert.deepEqual(PERMISSION_DEPENDENCIES["gl.journal.post"], ["gl.journal.read"]);
   assert.equal(Array.isArray(PERMISSION_CONFLICTS), true);
-  assert.equal(Array.isArray(ROLE_CAPABILITY_GROUPS.EntityAccountant), true);
+  assert.equal(Array.isArray(ROLE_CAPABILITY_GROUPS.GLOperator), true);
 
   const missingDependencyError = expectThrow(
     () =>
@@ -72,7 +72,7 @@ async function main() {
       "gl.journal.read",
       "gl.trial_balance.read",
       "gl.journal.post",
-      "gl.period.close",
+      "gl.period.close.execute",
     ],
     capabilityGroups: ["gl.posting"],
     subjectLabel: "Role CountryController",

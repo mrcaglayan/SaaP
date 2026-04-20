@@ -261,11 +261,18 @@ function buildSuggestedMissingAuthorityCodes(workflowFamily, authorityCodes) {
   }
 
   if (normalizeText(workflowFamily).toUpperCase() === "PERIOD_CLOSE") {
+    const hasReadiness = authorityCodeSet.has("PERIOD_CLOSE_READINESS");
+    const hasApproval = authorityCodeSet.has("PERIOD_CLOSE_APPROVAL");
+    const hasExecution = authorityCodeSet.has("PERIOD_CLOSE_EXECUTION");
     if (
-      authorityCodeSet.has("PERIOD_CLOSE_READINESS") &&
-      !authorityCodeSet.has("PERIOD_CLOSE")
+      hasReadiness &&
+      !hasApproval &&
+      !hasExecution
     ) {
-      return ["PERIOD_CLOSE"];
+      return ["PERIOD_CLOSE_APPROVAL", "PERIOD_CLOSE_EXECUTION"];
+    }
+    if (hasApproval && !hasExecution) {
+      return ["PERIOD_CLOSE_EXECUTION"];
     }
     return [];
   }

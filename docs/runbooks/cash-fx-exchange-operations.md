@@ -90,7 +90,7 @@ FX pages are visible/accessible only when tenant has at least one rollout code a
   - rerun action: `ops.jobs.manage`
   - override action: `ops.exceptions.manage`
 - Period close FX override in Journal Workbench (`/app/mahsup-islemleri`)
-  - period close run: `gl.period.close`
+  - period close run: `gl.period.close.execute`
   - FX close-gate override controls: `cash.fx.revaluation.override`
 
 ### UI Smoke-Click Checklist

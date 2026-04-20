@@ -298,7 +298,7 @@ async function main() {
       [reversalJournalEntryId, identity.tenantId, revaluationRunId]
     );
 
-    await apiRequest({
+    const retiredDirectClose = await apiRequest({
       baseUrl: BASE_URL,
       token,
       method: "POST",
@@ -307,8 +307,33 @@ async function main() {
         status: "HARD_CLOSED",
         note: "EXF02 hard close immutability check",
       },
-      expectedStatus: 201,
+      expectedStatus: 410,
     });
+    assert(
+      String(retiredDirectClose.json?.code || "").toUpperCase() ===
+        "LEGACY_DIRECT_CLOSE_ROUTE_RETIRED",
+      `Expected legacy direct-close route retirement, got ${toErrorText(retiredDirectClose.json)}`
+    );
+
+    // The direct-close route is intentionally retired. Seed HARD_CLOSED status
+    // directly so this integrity test can still verify reopen immutability.
+    await query(
+      `INSERT INTO period_statuses (
+          book_id,
+          fiscal_period_id,
+          status,
+          closed_by_user_id,
+          closed_at,
+          note
+       )
+       VALUES (?, ?, 'HARD_CLOSED', ?, CURRENT_TIMESTAMP, ?)
+       ON DUPLICATE KEY UPDATE
+         status = VALUES(status),
+         closed_by_user_id = VALUES(closed_by_user_id),
+         closed_at = VALUES(closed_at),
+         note = VALUES(note)`,
+      [base.bookId, period2Id, identity.userId, "EXF02 hard close immutability check"]
+    );
 
     const reopenHardClosed = await apiRequest({
       baseUrl: BASE_URL,
