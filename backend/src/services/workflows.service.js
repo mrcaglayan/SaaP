@@ -2357,6 +2357,13 @@ async function upsertUnifiedWorkflowPolicyMirrorTx({
   const targetType = mapWorkflowProcessToUnifiedTargetType(
     definitionRow.process_type ?? definitionRow.processType
   );
+  // New workflow definitions are created before their first step payload is
+  // saved. Keep the generic approval-policy mirror insertable during that
+  // short window, then replace it with the real bridged step count on step save.
+  const mirroredStepCount = Math.max(
+    1,
+    resolveWorkflowUnifiedBridgeStepCount(definitionRow, bridgeStepRows)
+  );
   const firstStepPermissionCode =
     normalizeWorkflowStepPermissionCode(
       bridgeStepRows[0]?.requiredPermissionCode ??
@@ -2408,7 +2415,7 @@ async function upsertUnifiedWorkflowPolicyMirrorTx({
       targetType,
       WORKFLOW_UNIFIED_ACTION_TYPE,
       Number(definitionRow.version_no ?? definitionRow.versionNo ?? 1),
-      resolveWorkflowUnifiedBridgeStepCount(definitionRow, bridgeStepRows),
+      mirroredStepCount,
       firstStepPermissionCode,
       toDbBoolean(definitionRow.is_active ?? definitionRow.isActive) ? 1 : 0,
       parsePositiveInt(

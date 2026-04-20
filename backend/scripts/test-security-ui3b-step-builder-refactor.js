@@ -4,7 +4,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   listWorkflowAuthorityDefinitions,
-  listWorkflowPackageCatalogEntries,
   listWorkflowPresetCatalogEntries,
 } from "../../frontend/src/pages/security/roleCatalog.js";
 import {
@@ -40,16 +39,13 @@ async function main() {
     "utf8"
   );
 
-  const workflowPackageEntries = listWorkflowPackageCatalogEntries();
   const workflowPresetEntries = listWorkflowPresetCatalogEntries();
   const localCloseCatalogContext = {
     workflowAuthorityEntries: listWorkflowAuthorityDefinitions("LOCAL_CLOSE_PACK"),
-    workflowPackageEntries,
     workflowPresetEntries,
   };
   const apCatalogContext = {
     workflowAuthorityEntries: listWorkflowAuthorityDefinitions("AP_DOCUMENT_POSTING"),
-    workflowPackageEntries,
     workflowPresetEntries,
   };
 
@@ -86,9 +82,14 @@ async function main() {
   });
 
   assert.equal(
-    localCloseDrafts[0].requiredPackageCode,
-    "PKG-LC-REVIEW",
-    "UI-3B should infer the workflow package from the existing local-close permission bridge"
+    Object.prototype.hasOwnProperty.call(localCloseDrafts[0], "requiredPackageCode"),
+    false,
+    "UI-3B should keep normalized non-AP step drafts free of legacy requiredPackageCode output"
+  );
+  assert.equal(
+    localCloseDrafts[0].requiredPermissionCode,
+    "ouclose.review",
+    "UI-3B should preserve the permission-first bridge for non-AP workflow steps"
   );
   assert.equal(
     localCloseDrafts[0].actionLabel,
@@ -96,8 +97,8 @@ async function main() {
     "UI-3B should infer a readable action label for bridged workflow steps"
   );
   assert.equal(
-    apDrafts[0].requiredPackageCode,
-    "",
+    Object.prototype.hasOwnProperty.call(apDrafts[0], "requiredPackageCode"),
+    false,
     "UI-3B should keep AP drafts package-free once the action/permission contract is normalized"
   );
   assert.equal(

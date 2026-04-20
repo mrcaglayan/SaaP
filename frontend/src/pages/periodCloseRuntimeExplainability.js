@@ -1,9 +1,15 @@
-import {
-  getWorkflowPackageCatalogEntry,
-} from "./security/roleCatalog.js";
-
 function normalizeText(value) {
   return String(value || "").trim();
+}
+
+function getPeriodCloseAuthorityLabel(requiredPermissionCode, l) {
+  if (requiredPermissionCode === "org.fiscal_period.read") {
+    return l("Review period-close readiness", "Donem kapanisi hazirligini incele");
+  }
+  if (requiredPermissionCode === "gl.period.close") {
+    return l("Close periods", "Donemleri kapat");
+  }
+  return "";
 }
 
 function formatCloseStatusLabel(closeStatus, l) {
@@ -17,11 +23,11 @@ function formatCloseStatusLabel(closeStatus, l) {
   return normalizedCloseStatus || l("Close", "Kapanis");
 }
 
-function resolveRequiredPackageCode(stage) {
+function resolveRequiredPermissionCode(stage) {
   if (stage === "READINESS_REVIEW" || stage === "READINESS_BLOCKED") {
-    return "PKG-PC-READINESS";
+    return "org.fiscal_period.read";
   }
-  return "PKG-PC-CLOSE";
+  return "gl.period.close";
 }
 
 function resolveCurrentStage({ latestRun, workflowGateBlock, fxGateBlock }) {
@@ -176,19 +182,19 @@ function resolveCurrentStepLabel(stage, l) {
   return l("Review readiness", "Hazirligi incele");
 }
 
-function resolveEligibleActorSummary(stage, requiredPackageLabel, l) {
-  if (!requiredPackageLabel) {
+function resolveEligibleActorSummary(stage, requiredAuthorityLabel, l) {
+  if (!requiredAuthorityLabel) {
     return "";
   }
   if (stage === "READINESS_BLOCKED" || stage === "READINESS_REVIEW") {
     return l(
-      `Users assigned ${requiredPackageLabel} at Legal Entity scope can review readiness inputs before close authority is used.`,
-      `Legal Entity kapsaminda ${requiredPackageLabel} atanan kullanicilar, kapanis yetkisi kullanilmadan once hazirlik girdilerini gozden gecirebilir.`
+      `Users assigned ${requiredAuthorityLabel} at Legal Entity scope can review readiness inputs before close authority is used.`,
+      `Legal Entity kapsaminda ${requiredAuthorityLabel} atanan kullanicilar, kapanis yetkisi kullanilmadan once hazirlik girdilerini gozden gecirebilir.`
     );
   }
   return l(
-    `Users assigned ${requiredPackageLabel} at Legal Entity scope can complete the final period close action.`,
-    `Legal Entity kapsaminda ${requiredPackageLabel} atanan kullanicilar son donem kapanisi aksiyonunu tamamlayabilir.`
+    `Users assigned ${requiredAuthorityLabel} at Legal Entity scope can complete the final period close action.`,
+    `Legal Entity kapsaminda ${requiredAuthorityLabel} atanan kullanicilar son donem kapanisi aksiyonunu tamamlayabilir.`
   );
 }
 
@@ -417,9 +423,8 @@ export function buildPeriodCloseRuntimeExplainabilityModel({
     workflowGateBlock,
     fxGateBlock,
   });
-  const requiredPackageCode = resolveRequiredPackageCode(stage);
-  const requiredPackageEntry = getWorkflowPackageCatalogEntry(requiredPackageCode);
-  const requiredPackageLabel = normalizeText(requiredPackageEntry?.displayName);
+  const requiredPermissionCode = resolveRequiredPermissionCode(stage);
+  const requiredAuthorityLabel = getPeriodCloseAuthorityLabel(requiredPermissionCode, l);
   const requestedCloseStatusLabel = formatCloseStatusLabel(requestedCloseStatus, l);
   const technicalItems = [];
 
@@ -466,9 +471,9 @@ export function buildPeriodCloseRuntimeExplainabilityModel({
       latestRun,
     }),
     currentStepLabel: resolveCurrentStepLabel(stage, l),
-    requiredPackageLabel,
+    requiredAuthorityLabel,
     requiredScopeLabel: l("Legal Entity", "Tuzel Kisilik"),
-    eligibleActorSummary: resolveEligibleActorSummary(stage, requiredPackageLabel, l),
+    eligibleActorSummary: resolveEligibleActorSummary(stage, requiredAuthorityLabel, l),
     userCapabilityLines: buildUserCapabilityLines({
       stage,
       canClosePeriod,
@@ -491,8 +496,8 @@ export function buildPeriodCloseRuntimeExplainabilityModel({
                 "Hazirlik incelemesi, nihai kapanis aksiyonundan ayridir. Bu yuzey iki asamayi da acikca gosterir."
               )
             : l(
-                "Period close uses gl.period.close for final close and gl.period.reopen for reopen authority. The package-first model splits these into PKG-PC-CLOSE and PKG-PC-REOPEN.",
-                "Donem kapanisi, nihai kapanis icin gl.period.close ve yeniden acma icin gl.period.reopen kullanir. Paket modeli bunlari PKG-PC-CLOSE ve PKG-PC-REOPEN olarak ayirir."
+                "Period close uses gl.period.close for final close and gl.period.reopen for reopen authority. The package-first model splits these into gl.period.close and PKG-PC-REOPEN.",
+                "Donem kapanisi, nihai kapanis icin gl.period.close ve yeniden acma icin gl.period.reopen kullanir. Paket modeli bunlari gl.period.close ve PKG-PC-REOPEN olarak ayirir."
               ),
       },
       {

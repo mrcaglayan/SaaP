@@ -115,9 +115,13 @@ async function main() {
 
   assert(
     pickerSource.includes("valueNodeKey = \"\"") &&
-      pickerSource.includes("const [internalValueNodeKey, setInternalValueNodeKey] = useState(\"\");") &&
+      pickerSource.includes("const [internalSelectionState, setInternalSelectionState] = useState(() => ({") &&
+      pickerSource.includes("nodeKey: \"\"") &&
+      pickerSource.includes("selectionToken: \"\"") &&
+      pickerSource.includes("const fallbackValueNodeKey =") &&
       pickerSource.includes("valueNodeKey: effectiveValueNodeKey") &&
-      pickerSource.includes("setInternalValueNodeKey(node.key);") &&
+      pickerSource.includes("nodeKey: node.key") &&
+      pickerSource.includes("selectionToken: buildScopeSelectionToken(nodeState.selection)") &&
       pickerSource.includes("onChange(nodeState.selection, node);"),
     "OrgScopeTreePicker should preserve branch-stable selection hints while still emitting plain scope semantics"
   );

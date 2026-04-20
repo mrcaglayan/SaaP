@@ -61,15 +61,19 @@ function resolveApNextActionCode(gate) {
   return normalizeApWorkflowActionCode(gate?.nextActionCode);
 }
 
-function resolveApRequiredPackageCodeFromAction(actionCode) {
-  if (actionCode === "DRAFT" || actionCode === "SUBMIT") {
-    return "PKG-AP-DRAFT-SUBMIT";
+function resolveApRequiredPermissionCodeFromAction(actionCode) {
+  // Explicit DRAFT steps keep ownership on edit/update authority; SUBMIT is the handoff action.
+  if (actionCode === "DRAFT") {
+    return "cari.doc.update";
+  }
+  if (actionCode === "SUBMIT") {
+    return "cari.doc.submit";
   }
   if (actionCode === "APPROVE") {
-    return "PKG-AP-APPROVE";
+    return "approvals.requests.approve";
   }
   if (actionCode === "POST") {
-    return "PKG-AP-POST";
+    return "cari.doc.post";
   }
   return "";
 }
@@ -143,81 +147,85 @@ function resolveWorkflowCurrentStepLabel(gate, surfaceState, l) {
   );
 }
 
-function resolveApRequiredPackageCode(row, gate, surfaceState) {
+function resolveApRequiredPermissionCode(row, gate, surfaceState) {
   const documentDirection = normalizeText(row?.direction).toUpperCase();
   if (documentDirection !== "AP" || !gate?.workflowGoverned) {
     return "";
   }
-  const explicitPackageCode = normalizeText(gate?.currentRequiredPackageCode).toUpperCase();
-  if (explicitPackageCode) {
-    return explicitPackageCode;
+  const explicitPermissionCode = normalizeText(
+    gate?.currentRequiredPermissionCode || gate?.effectiveApprovalPermissionCode
+  ).toLowerCase();
+  if (explicitPermissionCode) {
+    return explicitPermissionCode;
   }
-  const actionPackageCode = resolveApRequiredPackageCodeFromAction(resolveApCurrentActionCode(gate));
-  if (actionPackageCode) {
-    return actionPackageCode;
+  const actionPermissionCode = resolveApRequiredPermissionCodeFromAction(
+    resolveApCurrentActionCode(gate)
+  );
+  if (actionPermissionCode) {
+    return actionPermissionCode;
   }
   if (surfaceState.stage === "BLOCKED" || surfaceState.stage === "RETURNED") {
-    return "PKG-AP-DRAFT-SUBMIT";
+    return "cari.doc.submit";
   }
   if (surfaceState.stage === "PENDING") {
-    return "PKG-AP-APPROVE";
+    return "approvals.requests.approve";
   }
   if (
     surfaceState.stage === "APPROVED" ||
     surfaceState.stage === "POSTED" ||
     surfaceState.stage === "REVERSED"
   ) {
-    return "PKG-AP-POST";
+    return "cari.doc.post";
   }
   return "";
 }
 
-function translateApRequiredPackageLabel(packageCode, l) {
-  if (packageCode === "PKG-AP-DRAFT-SUBMIT") {
-    return l("AP Documents / Draft & Submit", "AP Belgeleri / Taslak ve Gonder");
+function translateApRequiredAuthorityLabel(permissionCode, l) {
+  if (permissionCode === "cari.doc.update" || permissionCode === "cari.doc.submit") {
+    return l("Draft and submit AP", "AP taslagini gonder");
   }
-  if (packageCode === "PKG-AP-APPROVE") {
-    return l("AP Documents / Approve", "AP Belgeleri / Onayla");
+  if (permissionCode === "approvals.requests.approve") {
+    return l("Approve AP", "AP onayla");
   }
-  if (packageCode === "PKG-AP-POST") {
-    return l("AP Documents / Post", "AP Belgeleri / Kaydet");
+  if (permissionCode === "cari.doc.post") {
+    return l("Post AP", "AP kaydet");
   }
   return "";
 }
 
-function buildApCurrentGateLine(currentActionCode, requiredPackageLabel, requiredScopeLabel, l) {
-  if (!currentActionCode || !requiredPackageLabel || !requiredScopeLabel) {
+function buildApCurrentGateLine(currentActionCode, requiredAuthorityLabel, requiredScopeLabel, l) {
+  if (!currentActionCode || !requiredAuthorityLabel || !requiredScopeLabel) {
     return "";
   }
   if (currentActionCode === "DRAFT") {
     return l(
-      `Draft work stays with ${requiredPackageLabel} at ${requiredScopeLabel} scope.`,
-      `${requiredScopeLabel} kapsaminda taslak calismasi ${requiredPackageLabel} ile kalir.`
+      `Draft work stays with ${requiredAuthorityLabel} at ${requiredScopeLabel} scope.`,
+      `${requiredScopeLabel} kapsaminda taslak calismasi ${requiredAuthorityLabel} ile kalir.`
     );
   }
   if (currentActionCode === "SUBMIT") {
     return l(
-      `Waiting for submission with ${requiredPackageLabel} at ${requiredScopeLabel} scope.`,
-      `${requiredScopeLabel} kapsaminda ${requiredPackageLabel} ile gonderim bekleniyor.`
+      `Waiting for submission with ${requiredAuthorityLabel} at ${requiredScopeLabel} scope.`,
+      `${requiredScopeLabel} kapsaminda ${requiredAuthorityLabel} ile gonderim bekleniyor.`
     );
   }
   if (currentActionCode === "APPROVE") {
     return l(
-      `Waiting for approval with ${requiredPackageLabel} at ${requiredScopeLabel} scope.`,
-      `${requiredScopeLabel} kapsaminda ${requiredPackageLabel} ile onay bekleniyor.`
+      `Waiting for approval with ${requiredAuthorityLabel} at ${requiredScopeLabel} scope.`,
+      `${requiredScopeLabel} kapsaminda ${requiredAuthorityLabel} ile onay bekleniyor.`
     );
   }
   return l(
-    `Waiting for posting with ${requiredPackageLabel} at ${requiredScopeLabel} scope.`,
-    `${requiredScopeLabel} kapsaminda ${requiredPackageLabel} ile kayit bekleniyor.`
+    `Waiting for posting with ${requiredAuthorityLabel} at ${requiredScopeLabel} scope.`,
+    `${requiredScopeLabel} kapsaminda ${requiredAuthorityLabel} ile kayit bekleniyor.`
   );
 }
 
 function resolveWorkflowEligibleActorSummary(
   surfaceState,
   currentActionCode,
-  requiredPackageCode,
-  requiredPackageLabel,
+  requiredPermissionCode,
+  requiredAuthorityLabel,
   requiredScopeLabel,
   l
 ) {
@@ -227,31 +235,31 @@ function resolveWorkflowEligibleActorSummary(
       "Workflow eylem zinciri gerekmiyor. Kayit yetkisi olan kullanicilar simdi islem yapabilir."
     );
   }
-  if (!requiredPackageLabel || !requiredScopeLabel) {
+  if (!requiredAuthorityLabel || !requiredScopeLabel) {
     return "";
   }
   if (currentActionCode === "DRAFT") {
     return l(
-      `Users assigned ${requiredPackageLabel} at ${requiredScopeLabel} scope can create or edit the current draft.`,
-      `${requiredScopeLabel} kapsaminda ${requiredPackageLabel} atanan kullanicilar mevcut taslagi olusturabilir veya duzenleyebilir.`
+      `Users assigned ${requiredAuthorityLabel} at ${requiredScopeLabel} scope can create or edit the current draft.`,
+      `${requiredScopeLabel} kapsaminda ${requiredAuthorityLabel} atanan kullanicilar mevcut taslagi olusturabilir veya duzenleyebilir.`
     );
   }
-  if (currentActionCode === "SUBMIT" || requiredPackageCode === "PKG-AP-DRAFT-SUBMIT") {
+  if (currentActionCode === "SUBMIT" || requiredPermissionCode === "cari.doc.submit") {
     return l(
-      `Users assigned ${requiredPackageLabel} at ${requiredScopeLabel} scope can submit or resubmit this document into the next workflow step.`,
-      `${requiredScopeLabel} kapsaminda ${requiredPackageLabel} atanan kullanicilar bu belgeyi bir sonraki workflow adimina gonderebilir veya yeniden gonderebilir.`
+      `Users assigned ${requiredAuthorityLabel} at ${requiredScopeLabel} scope can submit or resubmit this document into the next workflow step.`,
+      `${requiredScopeLabel} kapsaminda ${requiredAuthorityLabel} atanan kullanicilar bu belgeyi bir sonraki workflow adimina gonderebilir veya yeniden gonderebilir.`
     );
   }
-  if (currentActionCode === "APPROVE" || requiredPackageCode === "PKG-AP-APPROVE") {
+  if (currentActionCode === "APPROVE" || requiredPermissionCode === "approvals.requests.approve") {
     return l(
-      `Users assigned ${requiredPackageLabel} at ${requiredScopeLabel} scope can approve the current step.`,
-      `${requiredScopeLabel} kapsaminda ${requiredPackageLabel} atanan kullanicilar mevcut adimi onaylayabilir.`
+      `Users assigned ${requiredAuthorityLabel} at ${requiredScopeLabel} scope can approve the current step.`,
+      `${requiredScopeLabel} kapsaminda ${requiredAuthorityLabel} atanan kullanicilar mevcut adimi onaylayabilir.`
     );
   }
-  if (currentActionCode === "POST" || requiredPackageCode === "PKG-AP-POST") {
+  if (currentActionCode === "POST" || requiredPermissionCode === "cari.doc.post") {
     return l(
-      `Users assigned ${requiredPackageLabel} at ${requiredScopeLabel} scope can post the document now.`,
-      `${requiredScopeLabel} kapsaminda ${requiredPackageLabel} atanan kullanicilar belgeyi simdi kaydedebilir.`
+      `Users assigned ${requiredAuthorityLabel} at ${requiredScopeLabel} scope can post the document now.`,
+      `${requiredScopeLabel} kapsaminda ${requiredAuthorityLabel} atanan kullanicilar belgeyi simdi kaydedebilir.`
     );
   }
   if (surfaceState.stage === "PENDING") {
@@ -672,8 +680,8 @@ export function buildCariWorkflowDetailCardModel(row, l, options = {}) {
   const currentActionCode = resolveApCurrentActionCode(gate);
   const currentActionLabel = resolveApCurrentActionLabel(gate, l);
   const currentStepLabel = resolveWorkflowCurrentStepLabel(gate, surfaceState, l);
-  const requiredPackageCode = resolveApRequiredPackageCode(row, gate, surfaceState);
-  const requiredPackageLabel = translateApRequiredPackageLabel(requiredPackageCode, l);
+  const requiredPermissionCode = resolveApRequiredPermissionCode(row, gate, surfaceState);
+  const requiredAuthorityLabel = translateApRequiredAuthorityLabel(requiredPermissionCode, l);
   const requiredScopeLabel = currentScopeLabel || assignmentScopeLabel;
   const requiredScopeType = resolveWorkflowRequiredScopeType(gate);
   const routeScopeLabel = resolveWorkflowRoutingScopeLabel(gate, l);
@@ -741,13 +749,13 @@ export function buildCariWorkflowDetailCardModel(row, l, options = {}) {
       surfaceState.latestDecisionComment
     );
   }
-  if (requiredPackageLabel && requiredScopeType) {
+  if (requiredAuthorityLabel && requiredScopeType) {
     appendWorkflowItem(
       noteItems,
       l("Current gate", "Guncel gecit"),
       buildApCurrentGateLine(
         currentActionCode,
-        requiredPackageLabel,
+        requiredAuthorityLabel,
         requiredScopeLabel || requiredScopeType,
         l
       )
@@ -839,15 +847,15 @@ export function buildCariWorkflowDetailCardModel(row, l, options = {}) {
     currentActionCode,
     currentActionLabel,
     currentStepLabel,
-    requiredPackageCode,
-    requiredPackageLabel,
+    requiredPermissionCode,
+    requiredAuthorityLabel,
     requiredScopeType,
     requiredScopeLabel,
     eligibleActorSummary: resolveWorkflowEligibleActorSummary(
       surfaceState,
       currentActionCode,
-      requiredPackageCode,
-      requiredPackageLabel,
+      requiredPermissionCode,
+      requiredAuthorityLabel,
       requiredScopeLabel,
       l
     ),
@@ -876,12 +884,12 @@ function buildCariWorkflowUserCapabilityLines({
   const gateState = normalizeWorkflowGateState(gate?.state);
   const surfaceState = buildWorkflowSurfaceState(row, l);
   const currentActionCode = resolveApCurrentActionCode(gate);
-  const requiredPackageCode = resolveApRequiredPackageCode(
+  const requiredPermissionCode = resolveApRequiredPermissionCode(
     row,
     gate,
     surfaceState
   );
-  const requiredPackageLabel = translateApRequiredPackageLabel(requiredPackageCode, l);
+  const requiredAuthorityLabel = translateApRequiredAuthorityLabel(requiredPermissionCode, l);
   const requiredScopeLabel =
     resolveWorkflowCurrentScopeLabel(gate, l) || resolveWorkflowAssignmentScopeLabel(gate, l);
   if (!isAp || !gate?.workflowGoverned) {
@@ -915,11 +923,11 @@ function buildCariWorkflowUserCapabilityLines({
             "Bu belgeyi goruntuleyebilirsiniz ancak gonderemezsiniz."
           )
     );
-    if (requiredPackageLabel && requiredScopeLabel) {
+    if (requiredAuthorityLabel && requiredScopeLabel) {
       userCapabilityLines.push(
         l(
-          `Submission requires ${requiredPackageLabel} at ${requiredScopeLabel} scope.`,
-          `Gonderim icin ${requiredScopeLabel} kapsaminda ${requiredPackageLabel} gerekir.`
+          `Submission requires ${requiredAuthorityLabel} at ${requiredScopeLabel} scope.`,
+          `Gonderim icin ${requiredScopeLabel} kapsaminda ${requiredAuthorityLabel} gerekir.`
         )
       );
     }
@@ -938,11 +946,11 @@ function buildCariWorkflowUserCapabilityLines({
         "Bu belgeyi goruntuleyebilirsiniz ancak onaylayamazsiniz."
       )
     );
-    if (!canApproveWorkflow && requiredPackageLabel && requiredScopeLabel) {
+    if (!canApproveWorkflow && requiredAuthorityLabel && requiredScopeLabel) {
       userCapabilityLines.push(
         l(
-          `This step requires ${requiredPackageLabel} at ${requiredScopeLabel} scope.`,
-          `Bu adim ${requiredScopeLabel} kapsaminda ${requiredPackageLabel} gerektirir.`
+          `This step requires ${requiredAuthorityLabel} at ${requiredScopeLabel} scope.`,
+          `Bu adim ${requiredScopeLabel} kapsaminda ${requiredAuthorityLabel} gerektirir.`
         )
       );
       userCapabilityLines.push(
@@ -976,11 +984,11 @@ function buildCariWorkflowUserCapabilityLines({
         "Bu belgeyi goruntuleyebilirsiniz ancak kaydedemezsiniz."
       )
     );
-    if (requiredPackageLabel && requiredScopeLabel) {
+    if (requiredAuthorityLabel && requiredScopeLabel) {
       userCapabilityLines.push(
         l(
-          `Posting requires ${requiredPackageLabel} at ${requiredScopeLabel} scope.`,
-          `Kayit icin ${requiredScopeLabel} kapsaminda ${requiredPackageLabel} gerekir.`
+          `Posting requires ${requiredAuthorityLabel} at ${requiredScopeLabel} scope.`,
+          `Kayit icin ${requiredScopeLabel} kapsaminda ${requiredAuthorityLabel} gerekir.`
         )
       );
     }

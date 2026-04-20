@@ -122,6 +122,15 @@ const ROLE_PERMISSION_FAMILY_HINTS = Object.freeze({
   ConsolidationFinalizer: freezeList(["CONSOLIDATION_FINALIZE"]),
 });
 
+const REQUIRED_RISKY_RUNTIME_ROLE_RULE_IDS = Object.freeze([
+  "ap-maker-reviewer",
+  "ap-reviewer-poster",
+  "local-close-prepare-review",
+  "local-close-review-lock",
+  "period-close-readiness-close",
+  "consolidation-operator-finalizer",
+]);
+
 const RISKY_RUNTIME_ROLE_RULES = Object.freeze({
   "ap-maker-reviewer": freezeRule({
     id: "ap-maker-reviewer",
@@ -218,6 +227,16 @@ const RISKY_RUNTIME_ROLE_RULES = Object.freeze({
     rightPermissionFamilyCodes: ["CONSOLIDATION_FINALIZE"],
   }),
 });
+
+const missingRiskyRuntimeRoleRuleIds = REQUIRED_RISKY_RUNTIME_ROLE_RULE_IDS.filter(
+  (ruleId) => !RISKY_RUNTIME_ROLE_RULES[ruleId]
+);
+
+if (missingRiskyRuntimeRoleRuleIds.length > 0) {
+  throw new Error(
+    `Missing shipped runtime-role SoD rules: ${missingRiskyRuntimeRoleRuleIds.join(", ")}`
+  );
+}
 
 const RISKY_RUNTIME_ROLE_RULE_LIST = freezeList(
   Object.values(RISKY_RUNTIME_ROLE_RULES)
@@ -438,38 +457,6 @@ function resolveAuditAttribution(item, auditRows, auditReadable, l) {
     grantedAt: item.createdAt || createEvent?.created_at || "",
     lastChangedByLabel: updateEvent ? formatActorLabel(updateEvent, l) : "",
     lastChangedAt: updateEvent?.created_at || "",
-  };
-}
-
-function buildDirectAuditItem({
-  assignment,
-  kindLabel,
-  title,
-  sourceLabel,
-  sourceDetail,
-  auditRows,
-  auditReadable,
-  l,
-}) {
-  const attribution = resolveAuditAttribution(assignment, auditRows, auditReadable, l);
-  const statusMeta = getStatusMeta(assignment.status, l);
-  return {
-    id: `${kindLabel}-${assignment.assignmentId}`,
-    kindLabel,
-    title,
-    scopeType: assignment.scopeType,
-    scopeId: Number(assignment.scopeId || 0),
-    scopeLabel: assignment.scopeLabel,
-    sourceLabel,
-    sourceDetail,
-    statusLabel: statusMeta.label,
-    statusTone: statusMeta.tone,
-    effectiveFrom: assignment.effectiveFrom || "",
-    effectiveTo: assignment.effectiveTo || "",
-    grantedAt: attribution.grantedAt,
-    grantedByLabel: attribution.grantedByLabel,
-    lastChangedAt: attribution.lastChangedAt,
-    lastChangedByLabel: attribution.lastChangedByLabel,
   };
 }
 
@@ -929,34 +916,17 @@ export function buildCandidateRoleConflictWarnings({
  * current runtime bundles plus optional RBAC audit logs.
  */
 export function buildAssignmentAuditSummary({
-  workflowPackageAssignments,
   userBundles,
   auditRows,
   auditReadable,
   l,
   rolesByCode,
 }) {
-  const workflowPackageItems = (
-    Array.isArray(workflowPackageAssignments) ? workflowPackageAssignments : []
-  ).map((assignment) =>
-    buildDirectAuditItem({
-      assignment,
-      kindLabel: translate(l, "Workflow package", "Workflow paketi"),
-      title: assignment.packageLabel,
-      sourceLabel:
-        assignment.sourceTypeLabel || translate(l, "Direct / custom", "Dogrudan / ozel"),
-      sourceDetail: assignment.sourceDetail || assignment.packageSummary || "",
-      auditRows,
-      auditReadable,
-      l,
-    })
-  );
-
   const bundleItems = (Array.isArray(userBundles) ? userBundles : []).map((bundle) =>
     buildBundleAuditItem(bundle, auditRows, auditReadable, l)
   );
 
-  const auditItems = [...workflowPackageItems, ...bundleItems].sort(sortAuditItems);
+  const auditItems = bundleItems.sort(sortAuditItems);
   const sodWarnings = Array.from(
     new Map(
       buildRoleConflictWarnings(userBundles, rolesByCode, l).map((warning) => [

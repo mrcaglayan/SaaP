@@ -36,7 +36,9 @@ const SHAREHOLDER_PURPOSE_CODES = Object.freeze([
   SHAREHOLDER_COMMITMENT_DEBIT_PARENT_PURPOSE,
 ]);
 const SHAREHOLDER_PURPOSE_CODE_SET = new Set(SHAREHOLDER_PURPOSE_CODES);
-const BOOTSTRAP_HANDOFF_PRESET_CODE_ALIASES = Object.freeze({});
+const BOOTSTRAP_HANDOFF_PRESET_CODE_ALIASES = Object.freeze({
+  CountryAPController: "CountryAPApprover",
+});
 const BOOTSTRAP_HANDOFF_PRESET_DEFINITIONS = Object.freeze({
   EntityAPController: Object.freeze({
     code: "EntityAPController",
@@ -52,6 +54,20 @@ const BOOTSTRAP_HANDOFF_PRESET_DEFINITIONS = Object.freeze({
       "PayrollOperator",
       "LocalClosePreparer",
       "ShareholderCapitalOperator",
+    ]),
+    optionalRoleCodes: Object.freeze(["GLPostingAuthority"]),
+  }),
+  CountryAPApprover: Object.freeze({
+    code: "CountryAPApprover",
+    scopeType: "COUNTRY",
+    roleCodes: Object.freeze([
+      "CountryAPApprover",
+      "CountryAPPoster",
+      "APApprover",
+      "GLOperator",
+      "TreasuryApprover",
+      "PayrollApprover",
+      "LocalCloseReviewer",
     ]),
     optionalRoleCodes: Object.freeze(["GLPostingAuthority"]),
   }),

@@ -1,7 +1,3 @@
-import {
-  getWorkflowPackageCatalogEntry,
-} from "./security/roleCatalog.js";
-
 function normalizeText(value) {
   return String(value || "").trim();
 }
@@ -45,6 +41,38 @@ function translateScopeTypeLabel(scopeType, l) {
     return translate(l, "Tenant", "Tenant");
   }
   return normalizedScopeType;
+}
+
+function getConsolidationAuthorityLabel(requiredPermissionCode, l) {
+  if (requiredPermissionCode === "consolidation.run.create") {
+    return translate(l, "Prepare Consolidation runs", "Konsolidasyon calistirmalarini hazirla");
+  }
+  if (requiredPermissionCode === "consolidation.run.execute") {
+    return translate(l, "Execute Consolidation runs", "Konsolidasyon calistirmalarini yurut");
+  }
+  if (requiredPermissionCode === "consolidation.adjustment.post") {
+    return translate(l, "Post Consolidation adjustments", "Konsolidasyon duzeltmelerini post et");
+  }
+  if (requiredPermissionCode === "consolidation.elimination.post") {
+    return translate(l, "Post Consolidation eliminations", "Konsolidasyon eliminasyonlarini post et");
+  }
+  if (requiredPermissionCode === "consolidation.run.finalize") {
+    return translate(l, "Finalize Consolidation", "Konsolidasyonu sonlandir");
+  }
+  return "";
+}
+
+function getConsolidationAuthorityScopeType(requiredPermissionCode) {
+  if (
+    requiredPermissionCode === "consolidation.run.create" ||
+    requiredPermissionCode === "consolidation.run.execute" ||
+    requiredPermissionCode === "consolidation.adjustment.post" ||
+    requiredPermissionCode === "consolidation.elimination.post" ||
+    requiredPermissionCode === "consolidation.run.finalize"
+  ) {
+    return "GROUP";
+  }
+  return "";
 }
 
 function resolveWorkflowStatusLabel(workflowGate, reviewGateLoading, reviewGateError, l) {
@@ -117,19 +145,19 @@ function resolveCurrentStage({
   return "READY_TO_FINALIZE";
 }
 
-function resolveRequiredPackageCode(stage) {
+function resolveRequiredPermissionCode(stage) {
   if (
     stage === "EXECUTION_PENDING" ||
     stage === "EXECUTION_IN_PROGRESS" ||
     stage === "EXECUTION_RETRY"
   ) {
-    return "PKG-CON-EXECUTE";
+    return "consolidation.run.execute";
   }
   if (stage === "ADJUSTMENT_PENDING") {
-    return "PKG-CON-ADJUST";
+    return "consolidation.adjustment.post";
   }
   if (stage === "ELIMINATION_PENDING") {
-    return "PKG-CON-ELIM";
+    return "consolidation.elimination.post";
   }
   if (
     stage === "FINALIZE_PENDING_APPROVAL" ||
@@ -137,7 +165,7 @@ function resolveRequiredPackageCode(stage) {
     stage === "READY_TO_FINALIZE" ||
     stage === "FINALIZED"
   ) {
-    return "PKG-CON-FINALIZE";
+    return "consolidation.run.finalize";
   }
   return "";
 }
@@ -322,8 +350,8 @@ function resolveCurrentStepLabel(stage, l) {
   return translate(l, "Finalize", "Sonlandir");
 }
 
-function resolveEligibleActorSummary(stage, requiredPackageLabel, requiredScopeLabel, l) {
-  if (!requiredPackageLabel || !requiredScopeLabel) {
+function resolveEligibleActorSummary(stage, requiredAuthorityLabel, requiredScopeLabel, l) {
+  if (!requiredAuthorityLabel || !requiredScopeLabel) {
     return "";
   }
   if (
@@ -333,35 +361,35 @@ function resolveEligibleActorSummary(stage, requiredPackageLabel, requiredScopeL
   ) {
     return translate(
       l,
-      `Users assigned ${requiredPackageLabel} at ${requiredScopeLabel} scope can execute this run once preparation is complete.`,
-      `${requiredScopeLabel} kapsaminda ${requiredPackageLabel} atanan kullanicilar hazirlik tamamlandiginda bu calistirmayi yurutabilir.`
+      `Users assigned ${requiredAuthorityLabel} at ${requiredScopeLabel} scope can execute this run once preparation is complete.`,
+      `${requiredScopeLabel} kapsaminda ${requiredAuthorityLabel} atanan kullanicilar hazirlik tamamlandiginda bu calistirmayi yurutabilir.`
     );
   }
   if (stage === "ADJUSTMENT_PENDING") {
     return translate(
       l,
-      `Users assigned ${requiredPackageLabel} at ${requiredScopeLabel} scope can post draft consolidation adjustments now.`,
-      `${requiredScopeLabel} kapsaminda ${requiredPackageLabel} atanan kullanicilar taslak konsolidasyon duzeltmelerini simdi post edebilir.`
+      `Users assigned ${requiredAuthorityLabel} at ${requiredScopeLabel} scope can post draft consolidation adjustments now.`,
+      `${requiredScopeLabel} kapsaminda ${requiredAuthorityLabel} atanan kullanicilar taslak konsolidasyon duzeltmelerini simdi post edebilir.`
     );
   }
   if (stage === "ELIMINATION_PENDING") {
     return translate(
       l,
-      `Users assigned ${requiredPackageLabel} at ${requiredScopeLabel} scope can post draft eliminations now.`,
-      `${requiredScopeLabel} kapsaminda ${requiredPackageLabel} atanan kullanicilar taslak eliminasyonlari simdi post edebilir.`
+      `Users assigned ${requiredAuthorityLabel} at ${requiredScopeLabel} scope can post draft eliminations now.`,
+      `${requiredScopeLabel} kapsaminda ${requiredAuthorityLabel} atanan kullanicilar taslak eliminasyonlari simdi post edebilir.`
     );
   }
   if (stage === "FINALIZED") {
     return translate(
       l,
-      `This run is already locked; no further ${requiredPackageLabel} action is required.`,
-      `Bu calistirma zaten kilitli; ek ${requiredPackageLabel} aksiyonu gerekmiyor.`
+      `This run is already locked; no further ${requiredAuthorityLabel} action is required.`,
+      `Bu calistirma zaten kilitli; ek ${requiredAuthorityLabel} aksiyonu gerekmiyor.`
     );
   }
   return translate(
     l,
-    `Users assigned ${requiredPackageLabel} at ${requiredScopeLabel} scope can finalize this run once the blockers clear.`,
-    `Engeller temizlendikten sonra ${requiredScopeLabel} kapsaminda ${requiredPackageLabel} atanan kullanicilar bu calistirmayi sonlandirabilir.`
+    `Users assigned ${requiredAuthorityLabel} at ${requiredScopeLabel} scope can finalize this run once the blockers clear.`,
+    `Engeller temizlendikten sonra ${requiredScopeLabel} kapsaminda ${requiredAuthorityLabel} atanan kullanicilar bu calistirmayi sonlandirabilir.`
   );
 }
 
@@ -485,17 +513,18 @@ function buildUserCapabilityLines({
   return lines;
 }
 
-function buildPackageStageNoteItem(packageCode, label, englishVerb, turkishVerb, l) {
-  const packageEntry = getWorkflowPackageCatalogEntry(packageCode);
-  if (!packageEntry?.displayName || !packageEntry?.defaultScope) {
+function buildAuthorityStageNoteItem(requiredPermissionCode, label, englishVerb, turkishVerb, l) {
+  const authorityLabel = getConsolidationAuthorityLabel(requiredPermissionCode, l);
+  const defaultScope = getConsolidationAuthorityScopeType(requiredPermissionCode);
+  if (!authorityLabel || !defaultScope) {
     return null;
   }
   return {
     label,
-    value: translate(l, "{{package}} governs {{verb}} at {{scope}} scope.", "{{package}}, {{scope}} kapsaminda {{verb}} yonetir.", {
-      package: packageEntry.displayName,
+    value: translate(l, "{{authority}} governs {{verb}} at {{scope}} scope.", "{{authority}}, {{scope}} kapsaminda {{verb}} yonetir.", {
+      authority: authorityLabel,
       verb: translate(l, englishVerb, turkishVerb),
-      scope: translateScopeTypeLabel(packageEntry.defaultScope, l),
+      scope: translateScopeTypeLabel(defaultScope, l),
     }),
   };
 }
@@ -507,8 +536,8 @@ function buildStageVisibilityItems(reviewGateData, l) {
   const blockerCount = Array.isArray(reviewGateData?.blockers) ? reviewGateData.blockers.length : 0;
   const warningCount = Array.isArray(reviewGateData?.warnings) ? reviewGateData.warnings.length : 0;
   return [
-    buildPackageStageNoteItem(
-      "PKG-CON-PREPARE",
+    buildAuthorityStageNoteItem(
+      "consolidation.run.create",
       translate(l, "Prepare stage", "Hazirlik asamasi"),
       "preparing this run",
       "bu calistirmayi hazirlama",
@@ -650,11 +679,8 @@ export function buildConsolidationRuntimeExplainabilityModel({
     reviewGateLoading,
     reviewGateError,
   });
-  const requiredPackageCode = resolveRequiredPackageCode(stage);
-  const requiredPackageEntry = requiredPackageCode
-    ? getWorkflowPackageCatalogEntry(requiredPackageCode)
-    : null;
-  const requiredScopeType = normalizeText(requiredPackageEntry?.defaultScope).toUpperCase();
+  const requiredPermissionCode = resolveRequiredPermissionCode(stage);
+  const requiredScopeType = getConsolidationAuthorityScopeType(requiredPermissionCode);
   const requiredScopeLabel = translateScopeTypeLabel(requiredScopeType, l);
 
   return {
@@ -663,11 +689,11 @@ export function buildConsolidationRuntimeExplainabilityModel({
     headline: resolveHeadline(stage, reviewGateData, l),
     supportingText: resolveSupportingText(selectedRun, reviewGateData, reviewGateError),
     currentStepLabel: resolveCurrentStepLabel(stage, l),
-    requiredPackageLabel: requiredPackageEntry?.displayName || "",
+    requiredAuthorityLabel: getConsolidationAuthorityLabel(requiredPermissionCode, l),
     requiredScopeLabel,
     eligibleActorSummary: resolveEligibleActorSummary(
       stage,
-      requiredPackageEntry?.displayName || "",
+      getConsolidationAuthorityLabel(requiredPermissionCode, l),
       requiredScopeLabel,
       l
     ),

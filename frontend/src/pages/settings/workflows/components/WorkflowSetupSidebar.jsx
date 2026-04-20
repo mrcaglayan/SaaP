@@ -2,7 +2,6 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { CheckCircle2, Circle } from "lucide-react";
-import WorkflowExplainabilityPreviewPanel from "./WorkflowExplainabilityPreviewPanel.jsx";
 
 function SummaryRow({ label, value, done, fallback }) {
   return (
@@ -36,7 +35,6 @@ export default function WorkflowSetupSidebar({
   assignmentStatus,
   recommendation,
   workflowPreviewText,
-  workflowExplainabilityPreview = null,
   assignmentEffectText,
   quickGuide,
   compactForStepBuilder = false,
@@ -128,16 +126,6 @@ export default function WorkflowSetupSidebar({
         </Card>
       ) : null}
 
-      {!isStepBuilderFocus ? (
-        <WorkflowExplainabilityPreviewPanel
-          title={l("Live preview", "Canli onizleme")}
-          previewModel={workflowExplainabilityPreview}
-          tone="blue"
-          compact
-          maxEntries={3}
-        />
-      ) : null}
-
       <Card className="rounded-3xl border-blue-200 bg-blue-50/80">
         <CardHeader className="pb-2">
           <CardTitle className="text-sm text-blue-900">
@@ -152,8 +140,8 @@ export default function WorkflowSetupSidebar({
           {isStepBuilderFocus ? (
             <p className="text-xs leading-5 text-blue-800/90">
               {l(
-                "Recommendations and live preview are moved into the main Step 4 canvas so the step chain stays readable while editing.",
-                "Adim zinciri duzenleme sirasinda okunabilir kalsin diye oneriler ve canli onizleme ana Adim 4 alanina tasindi."
+                "The builder keeps the saved workflow path and scope outcome visible while you edit the step chain.",
+                "Adim zincirini duzenlerken kaydedilecek workflow yolu ve kapsam sonucu gorunur kalir."
               )}
             </p>
           ) : null}

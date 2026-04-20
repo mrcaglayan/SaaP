@@ -22,8 +22,6 @@ import { useI18n } from "../../i18n/useI18n.js";
 import { useModuleReadiness } from "../../readiness/useModuleReadiness.js";
 import {
   listWorkflowAuthorityDefinitions,
-  listWorkflowPackageCatalogEntries,
-  listWorkflowPresetCatalogEntries,
 } from "../security/roleCatalog.js";
 import {
   findOrgScopeTreeNodeByScopeSelection,
@@ -49,7 +47,6 @@ import {
   buildAssignmentSelectionLabel,
   buildAssignmentScopeLabel,
   buildDefaultSteps,
-  buildWorkflowExplainabilityPreviewModel,
   buildWorkflowCoverageReviewModel,
   buildWorkflowPresetComparisonModel,
   buildWorkflowPresetPreviewModel,
@@ -77,6 +74,7 @@ const WORKFLOW_WORKBENCH_TABS = Object.freeze([
   "records",
   "setup",
 ]);
+const EMPTY_WORKFLOW_PRESET_ENTRIES = Object.freeze([]);
 
 function updateWorkbenchSearchParams(searchParams, changes) {
   const nextSearchParams = new URLSearchParams(searchParams);
@@ -318,8 +316,8 @@ export default function WorkflowSetupPage({ workspaceMode = "" }) {
     () => buildWorkflowPreview(stepDrafts, text.stepScopeLabels, l),
     [stepDrafts, text.stepScopeLabels, l]
   );
-  const workflowPresetEntries = useMemo(() => listWorkflowPresetCatalogEntries(), []);
-  const workflowPackageEntries = useMemo(() => listWorkflowPackageCatalogEntries(), []);
+  // The role-only hard delete removed shipped workflow preset metadata from the UI.
+  const workflowPresetEntries = EMPTY_WORKFLOW_PRESET_ENTRIES;
   const workflowAuthorityEntries = useMemo(
     () => listWorkflowAuthorityDefinitions(selectedProcessType),
     [selectedProcessType]
@@ -335,10 +333,9 @@ export default function WorkflowSetupPage({ workspaceMode = "" }) {
   const workflowStepCatalogContext = useMemo(
     () => ({
       workflowAuthorityEntries,
-      workflowPackageEntries,
       workflowPresetEntries,
     }),
-    [workflowAuthorityEntries, workflowPackageEntries, workflowPresetEntries]
+    [workflowAuthorityEntries, workflowPresetEntries]
   );
   const workflowPresetOptions = useMemo(
     () =>
@@ -415,7 +412,6 @@ export default function WorkflowSetupPage({ workspaceMode = "" }) {
         stepDrafts,
         processType: selectedProcessType,
         workflowAuthorityEntries,
-        workflowPackageEntries,
         coverageDiagnostics,
         stepScopeLabels: text.stepScopeLabels,
         l,
@@ -427,24 +423,6 @@ export default function WorkflowSetupPage({ workspaceMode = "" }) {
       stepDrafts,
       workflowAuthorityEntries,
       text.stepScopeLabels,
-      workflowPackageEntries,
-    ]
-  );
-  const workflowExplainabilityPreview = useMemo(
-    () =>
-      buildWorkflowExplainabilityPreviewModel({
-        stepDrafts,
-        processType: selectedProcessType,
-        workflowStepValidation,
-        stepScopeLabels: text.stepScopeLabels,
-        l,
-      }),
-    [
-      l,
-      selectedProcessType,
-      stepDrafts,
-      text.stepScopeLabels,
-      workflowStepValidation,
     ]
   );
   const assignmentEffectText = useMemo(
@@ -793,7 +771,6 @@ export default function WorkflowSetupPage({ workspaceMode = "" }) {
                 stepNo: Number(row?.stepNo || 0) || 1,
                 actionCode: row?.actionCode ?? null,
                 stageScopeType: String(row?.stageScopeType || "LEGAL_ENTITY"),
-                requiredPackageCode: row?.requiredPackageCode ?? null,
                 requiredPermissionCode: row?.requiredPermissionCode ?? null,
                 minApproverCount: Number(row?.minApproverCount || 1) || 1,
                 allowSelfApprove: Boolean(row?.allowSelfApprove),
@@ -1709,7 +1686,6 @@ export default function WorkflowSetupPage({ workspaceMode = "" }) {
               coverageDiagnosticsLoading={coverageDiagnosticsLoading}
               coverageDiagnosticsError={coverageDiagnosticsError}
               canReadCoverageDiagnostics={canReadAssignments}
-              workflowExplainabilityPreview={workflowExplainabilityPreview}
               apBusinessLabels={text.apBusinessLabels}
             />
           ) : null}
@@ -1724,7 +1700,6 @@ export default function WorkflowSetupPage({ workspaceMode = "" }) {
               workflowType={selectedProcessType}
               workflowTypeLabel={selectedProcessTypeLabel}
               workflowPreviewText={workflowPreviewText}
-              workflowExplainabilityPreview={workflowExplainabilityPreview}
               assignmentEffectText={assignmentEffectText}
               onBack={() => setCurrentStep(4)}
               onSubmitAssignment={onCreateAssignment}
@@ -1758,7 +1733,6 @@ export default function WorkflowSetupPage({ workspaceMode = "" }) {
             assignmentStatus={assignmentForm.status}
             recommendation={selectedRecommendation}
             workflowPreviewText={workflowPreviewText}
-            workflowExplainabilityPreview={workflowExplainabilityPreview}
             assignmentEffectText={assignmentEffectText}
             quickGuide={text.quickGuide}
             compactForStepBuilder={currentStep === 4}

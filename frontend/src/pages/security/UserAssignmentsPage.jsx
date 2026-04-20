@@ -45,7 +45,6 @@ import {
   getBootstrapHandoffPresetDisplayLabel,
   getRoleCatalogEntry,
   groupRolesForManagement,
-  isWorkflowPackageAssignmentRoleCode,
 } from "./roleCatalog.js";
 import SecurityAdminWorkspaceShell from "./SecurityAdminWorkspaceShell.jsx";
 const SCOPE_TYPES = ["TENANT", "GROUP", "COUNTRY", "LEGAL_ENTITY", "OPERATING_UNIT"];
@@ -295,11 +294,6 @@ function resolveAssignmentLifecycle(rows) {
 function buildAssignmentBundles(assignments, usersById, lookups, tenantScopeId) {
   const grouped = new Map();
   for (const assignment of Array.isArray(assignments) ? assignments : []) {
-    // Managed package-backed rows are intentionally excluded from the
-    // role-native workspace while the cleanup track removes them fully.
-    if (isWorkflowPackageAssignmentRoleCode(assignment?.role_code)) {
-      continue;
-    }
     const key = [
       Number(assignment.user_id || 0),
       normalizeText(assignment.scope_type).toUpperCase(),
@@ -418,9 +412,7 @@ function buildUserDirectoryRows(
     const roleCodes = Array.from(
       new Set(userBundles.flatMap((bundle) => bundle.roleCodes))
     );
-    const listedRuntimeRoleCodes = roleCodes.filter(
-      (roleCode) => !isWorkflowPackageAssignmentRoleCode(roleCode)
-    );
+    const listedRuntimeRoleCodes = roleCodes;
     const scopes = Array.from(
       new Set([
         ...userBundles.map((bundle) => `${bundle.scopeType}:${bundle.scopeId}`),
@@ -2215,7 +2207,6 @@ export default function UserAssignmentsPage() {
   const selectedWorkbenchAssignmentAuditSummary = useMemo(
     () =>
       buildAssignmentAuditSummary({
-        workflowPackageAssignments: [],
         userBundles: selectedWorkbenchUserBundles,
         auditRows: selectedWorkbenchAuditRows,
         auditReadable: canReadAudit && !selectedWorkbenchAuditError,

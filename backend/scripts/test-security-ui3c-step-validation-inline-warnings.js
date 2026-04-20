@@ -4,7 +4,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   listWorkflowAuthorityDefinitions,
-  listWorkflowPackageCatalogEntries,
 } from "../../frontend/src/pages/security/roleCatalog.js";
 import { buildWorkflowStepValidationModel } from "../../frontend/src/pages/settings/workflows/utils/workflowSetupHelpers.js";
 import { getApWorkflowRequiredPermissionCode } from "../../shared/cariDocumentWorkflowGovernance.js";
@@ -34,7 +33,6 @@ async function main() {
     "utf8"
   );
 
-  const workflowPackageEntries = listWorkflowPackageCatalogEntries();
   const stepScopeLabels = {
     OPERATING_UNIT: "Operating Unit",
     LEGAL_ENTITY: "Legal Entity",
@@ -53,7 +51,6 @@ async function main() {
     ],
     processType: "LOCAL_CLOSE_PACK",
     workflowAuthorityEntries: listWorkflowAuthorityDefinitions("LOCAL_CLOSE_PACK"),
-    workflowPackageEntries,
     stepScopeLabels,
     l,
   });
@@ -74,21 +71,20 @@ async function main() {
       {
         stepNo: 1,
         stageScopeType: "GROUP",
-        requiredPermissionCode: "ouclose.submit",
+        requiredPermissionCode: "ouclose.prepare",
         requiredAuthorityLabel: "Prepare Local Close",
         allowSelfApprove: false,
       },
     ],
     processType: "LOCAL_CLOSE_PACK",
     workflowAuthorityEntries: listWorkflowAuthorityDefinitions("LOCAL_CLOSE_PACK"),
-    workflowPackageEntries,
     stepScopeLabels,
     l,
   });
 
   assert.equal(
     invalidScopeValidation.steps[0].blockingIssues.some(
-      (issue) => issue.code === "package_scope_mismatch"
+      (issue) => issue.code === "authority_scope_mismatch"
     ),
     true,
     "UI-3C should warn when the selected authority does not support the selected scope"
@@ -106,7 +102,6 @@ async function main() {
     ],
     processType: "PERIOD_CLOSE",
     workflowAuthorityEntries: listWorkflowAuthorityDefinitions("PERIOD_CLOSE"),
-    workflowPackageEntries,
     coverageDiagnostics: {
       checks: {
         approvers: [
@@ -154,7 +149,6 @@ async function main() {
     ],
     processType: "AP_DOCUMENT_POSTING",
     workflowAuthorityEntries: listWorkflowAuthorityDefinitions("AP_DOCUMENT_POSTING"),
-    workflowPackageEntries,
     coverageDiagnostics: {
       checks: {
         steps: [
@@ -191,7 +185,6 @@ async function main() {
     ],
     processType: "PERIOD_CLOSE",
     workflowAuthorityEntries: listWorkflowAuthorityDefinitions("PERIOD_CLOSE"),
-    workflowPackageEntries,
     stepScopeLabels,
     l,
   });

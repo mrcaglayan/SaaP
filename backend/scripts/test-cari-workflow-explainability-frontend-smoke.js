@@ -179,7 +179,7 @@ async function main() {
         currentStepNo: 1,
         totalSteps: 2,
         currentActionCode: "APPROVE",
-        currentRequiredPackageCode: "PKG-AP-APPROVE",
+        currentRequiredPermissionCode: "approvals.requests.approve",
         currentStageScopeType: "GROUP",
         currentStageScopeLabel: "Group",
         effectiveApprovalPermissionCode: "approvals.requests.approve",
@@ -199,11 +199,11 @@ async function main() {
     pendingDetailModel?.headline === "Waiting for Group approval" &&
       pendingDetailModel?.currentStepLabel === "Step 1 of 2" &&
       pendingDetailModel?.factSectionTitle === "Routing context" &&
-      pendingDetailModel?.requiredPackageLabel === "AP Documents / Approve" &&
+      pendingDetailModel?.requiredAuthorityLabel === "Approve AP" &&
       pendingDetailModel?.requiredScopeType === "GROUP" &&
       pendingDetailModel?.requiredScopeLabel === "Group" &&
       pendingDetailModel?.eligibleActorSummary ===
-        "Users assigned AP Documents / Approve at Group scope can approve the current step." &&
+        "Users assigned Approve AP at Group scope can approve the current step." &&
       findItemValue(pendingDetailModel?.factItems, "Matched route") ===
         "WF-AP-ENTITY-REVIEW - Entity Review Route" &&
       findItemValue(pendingDetailModel?.factItems, "Route scope") === "Legal Entity" &&
@@ -216,7 +216,7 @@ async function main() {
       ) &&
       findItemValue(pendingDetailModel?.factItems, "Amount basis") === "Base amount" &&
       findItemValue(pendingDetailModel?.noteItems, "Current gate") ===
-        "Waiting for approval with AP Documents / Approve at Group scope." &&
+        "Waiting for approval with Approve AP at Group scope." &&
       findItemValue(pendingDetailModel?.technicalItems, "Required authority") ===
         "AP approval at Group scope" &&
       findItemValue(pendingDetailModel?.technicalItems, "Technical permission") ===
@@ -253,7 +253,7 @@ async function main() {
         currentStepNo: 1,
         totalSteps: 2,
         currentActionCode: "APPROVE",
-        currentRequiredPackageCode: "PKG-AP-APPROVE",
+        currentRequiredPermissionCode: "approvals.requests.approve",
         currentStageScopeType: "GROUP",
         currentStageScopeLabel: "Group",
         effectiveApprovalPermissionCode: "approvals.requests.approve",
@@ -294,7 +294,7 @@ async function main() {
         "You can view this document but cannot approve it."
       ) &&
       pendingActionModel?.userCapabilityLines.includes(
-        "This step requires AP Documents / Approve at Group scope."
+        "This step requires Approve AP at Group scope."
       ) &&
       pendingActionModel?.userCapabilityLines.includes(
         "You do not have approval authority for this step."
@@ -323,7 +323,7 @@ async function main() {
         currentStepNo: 1,
         totalSteps: 1,
         currentActionCode: "POST",
-        currentRequiredPackageCode: "PKG-AP-POST",
+        currentRequiredPermissionCode: "cari.doc.post",
         currentStageScopeType: "COUNTRY",
         currentStageScopeLabel: "Country",
         waitingForSummary: "Ready for Country posting",
@@ -423,7 +423,7 @@ async function main() {
         'title={l("Workflow route + status", "Workflow rota + durum")}'
       ) &&
       runtimeExplainabilityPanelSource.includes("Current step") &&
-      runtimeExplainabilityPanelSource.includes("Required package") &&
+      runtimeExplainabilityPanelSource.includes("Required authority") &&
       runtimeExplainabilityPanelSource.includes("Required scope") &&
       runtimeExplainabilityPanelSource.includes("Routing context") &&
       runtimeExplainabilityPanelSource.includes("Who can act next") &&

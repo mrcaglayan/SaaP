@@ -1,7 +1,3 @@
-import {
-  getWorkflowPackageCatalogEntry,
-} from "./security/roleCatalog.js";
-
 const PREPARATION_STATUSES = new Set([
   "NOT_OPENED",
   "OPEN",
@@ -28,6 +24,30 @@ const ACTION_HISTORY_LABELS = Object.freeze({
     noteFallback: "Locked after approval.",
   },
 });
+
+function getLocalCloseAuthorityLabel(requiredPermissionCode, l) {
+  if (requiredPermissionCode === "ouclose.prepare") {
+    return l("Prepare Local Close", "Yerel kapanisi hazirla");
+  }
+  if (requiredPermissionCode === "ouclose.review") {
+    return l("Review Local Close", "Yerel kapanisi incele");
+  }
+  if (requiredPermissionCode === "ouclose.approve") {
+    return l("Approve and lock Local Close", "Yerel kapanisi onayla ve kilitle");
+  }
+  return "";
+}
+
+function getLocalCloseAuthorityScopeType(requiredPermissionCode) {
+  if (
+    requiredPermissionCode === "ouclose.prepare" ||
+    requiredPermissionCode === "ouclose.review" ||
+    requiredPermissionCode === "ouclose.approve"
+  ) {
+    return "LEGAL_ENTITY";
+  }
+  return "";
+}
 
 function normalizeText(value) {
   return String(value || "").trim();
@@ -62,19 +82,19 @@ function formatPackContentScopeLabel(pack, l) {
   return l("HQ / Central", "Merkez / HQ");
 }
 
-function resolveCurrentPackageCode(pack, reviewGate) {
+function resolveCurrentAuthorityPermissionCode(pack, reviewGate) {
   const currentStatus = normalizeText(reviewGate?.currentStatus || pack?.status).toUpperCase();
   if (currentStatus === "LOCKED") {
     return "";
   }
   if (currentStatus === "APPROVED") {
-    return "PKG-LC-APPROVE-LOCK";
+    return "ouclose.approve";
   }
   if (currentStatus === "READY_FOR_REVIEW") {
-    return "PKG-LC-REVIEW";
+    return "ouclose.review";
   }
   if (PREPARATION_STATUSES.has(currentStatus)) {
-    return "PKG-LC-PREPARE";
+    return "ouclose.prepare";
   }
   return "";
 }
@@ -119,7 +139,7 @@ function resolveTone(currentStatus, reviewGate) {
   return "blue";
 }
 
-function resolveCurrentStepLabel(currentStatus, requiredPackageLabel, l) {
+function resolveCurrentStepLabel(currentStatus, requiredAuthorityLabel, l) {
   if (currentStatus === "LOCKED") {
     return l("Locked", "Kilitli");
   }
@@ -132,7 +152,7 @@ function resolveCurrentStepLabel(currentStatus, requiredPackageLabel, l) {
   if (currentStatus === "RETURNED" || currentStatus === "REOPENED") {
     return l("Correction and resubmission", "Duzeltme ve yeniden gonderim");
   }
-  return requiredPackageLabel || l("Prepare and submit", "Hazirla ve gonder");
+  return requiredAuthorityLabel || l("Prepare and submit", "Hazirla ve gonder");
 }
 
 function resolveHeadline(currentStatus, reviewGate, l) {
@@ -203,31 +223,31 @@ function resolveWorkflowStatusLabel(workflowGate, l) {
   return normalizeText(workflowGate?.workflowInstanceStatus) || l("Pending", "Beklemede");
 }
 
-function buildEligibleActorSummary(requiredPackageCode, requiredPackageLabel, requiredScopeLabel, currentStatus, l) {
-  if (!requiredPackageLabel || !requiredScopeLabel) {
+function buildEligibleActorSummary(requiredPermissionCode, requiredAuthorityLabel, requiredScopeLabel, currentStatus, l) {
+  if (!requiredAuthorityLabel || !requiredScopeLabel) {
     return "";
   }
-  if (requiredPackageCode === "PKG-LC-PREPARE") {
+  if (requiredPermissionCode === "ouclose.prepare") {
     return l(
-      `Users assigned ${requiredPackageLabel} at ${requiredScopeLabel} scope can prepare and submit this pack.`,
-      `${requiredScopeLabel} kapsaminda ${requiredPackageLabel} atanan kullanicilar bu paketi hazirlayip gonderebilir.`
+      `Users assigned ${requiredAuthorityLabel} at ${requiredScopeLabel} scope can prepare and submit this pack.`,
+      `${requiredScopeLabel} kapsaminda ${requiredAuthorityLabel} atanan kullanicilar bu paketi hazirlayip gonderebilir.`
     );
   }
-  if (requiredPackageCode === "PKG-LC-REVIEW") {
+  if (requiredPermissionCode === "ouclose.review") {
     return l(
-      `Users assigned ${requiredPackageLabel} at ${requiredScopeLabel} scope can review or return this pack.`,
-      `${requiredScopeLabel} kapsaminda ${requiredPackageLabel} atanan kullanicilar bu paketi inceleyebilir veya iade edebilir.`
+      `Users assigned ${requiredAuthorityLabel} at ${requiredScopeLabel} scope can review or return this pack.`,
+      `${requiredScopeLabel} kapsaminda ${requiredAuthorityLabel} atanan kullanicilar bu paketi inceleyebilir veya iade edebilir.`
     );
   }
-  if (requiredPackageCode === "PKG-LC-APPROVE-LOCK") {
+  if (requiredPermissionCode === "ouclose.approve") {
     return currentStatus === "APPROVED"
       ? l(
-          `Users assigned ${requiredPackageLabel} at ${requiredScopeLabel} scope can lock this pack now.`,
-          `${requiredScopeLabel} kapsaminda ${requiredPackageLabel} atanan kullanicilar bu paketi simdi kilitleyebilir.`
+          `Users assigned ${requiredAuthorityLabel} at ${requiredScopeLabel} scope can lock this pack now.`,
+          `${requiredScopeLabel} kapsaminda ${requiredAuthorityLabel} atanan kullanicilar bu paketi simdi kilitleyebilir.`
         )
       : l(
-          `Users assigned ${requiredPackageLabel} at ${requiredScopeLabel} scope can approve and lock this pack after the earlier gates clear.`,
-          `Daha onceki kapilar temizlendikten sonra ${requiredScopeLabel} kapsaminda ${requiredPackageLabel} atanan kullanicilar bu paketi onaylayip kilitleyebilir.`
+          `Users assigned ${requiredAuthorityLabel} at ${requiredScopeLabel} scope can approve and lock this pack after the earlier gates clear.`,
+          `Daha onceki kapilar temizlendikten sonra ${requiredScopeLabel} kapsaminda ${requiredAuthorityLabel} atanan kullanicilar bu paketi onaylayip kilitleyebilir.`
         );
   }
   return "";
@@ -460,14 +480,14 @@ function buildHistoryItems(auditRows, l) {
     });
 }
 
-function buildStageRequirementValue(requiredPackageCode, workflowGate, l) {
-  if (requiredPackageCode === "PKG-LC-PREPARE") {
+function buildStageRequirementValue(requiredPermissionCode, workflowGate, l) {
+  if (requiredPermissionCode === "ouclose.prepare") {
     return l(
       "Prepare the working pack and resubmit it into review before later approval or lock can happen.",
       "Daha sonraki onay veya kilit once, calisma paketini hazirlayip tekrar incelemeye gonderin."
     );
   }
-  if (requiredPackageCode === "PKG-LC-REVIEW") {
+  if (requiredPermissionCode === "ouclose.review") {
     return workflowGate?.required && !workflowGate?.approved
       ? l(
           "Review remains visible, but workflow approval must clear before final local-close approval can proceed.",
@@ -478,7 +498,7 @@ function buildStageRequirementValue(requiredPackageCode, workflowGate, l) {
           "Son onay-ve-kilit siniri devralmadan once bu paketi inceleyin veya iade edin."
         );
   }
-  if (requiredPackageCode === "PKG-LC-APPROVE-LOCK") {
+  if (requiredPermissionCode === "ouclose.approve") {
     return l(
       "The final approve-and-lock package now governs the remaining close decision.",
       "Kalan kapanis kararini artik son onay-ve-kilit paketi yonetir."
@@ -507,12 +527,9 @@ export function buildLocalCloseRuntimeExplainabilityModel({
   }
 
   const currentStatus = normalizeText(reviewGate.currentStatus || pack.status).toUpperCase();
-  const requiredPackageCode = resolveCurrentPackageCode(pack, reviewGate);
-  const requiredPackageEntry = requiredPackageCode
-    ? getWorkflowPackageCatalogEntry(requiredPackageCode)
-    : null;
-  const requiredPackageLabel = normalizeText(requiredPackageEntry?.displayName);
-  const requiredScopeType = normalizeText(requiredPackageEntry?.defaultScope).toUpperCase();
+  const requiredPermissionCode = resolveCurrentAuthorityPermissionCode(pack, reviewGate);
+  const requiredAuthorityLabel = getLocalCloseAuthorityLabel(requiredPermissionCode, l);
+  const requiredScopeType = getLocalCloseAuthorityScopeType(requiredPermissionCode);
   const requiredScopeLabel = translateScopeTypeLabel(requiredScopeType, l);
   const noteItems = [];
   const packContentScopeLabel = formatPackContentScopeLabel(pack, l);
@@ -524,7 +541,7 @@ export function buildLocalCloseRuntimeExplainabilityModel({
     });
   }
 
-  const stageRequirementValue = buildStageRequirementValue(requiredPackageCode, reviewGate.workflowGate, l);
+  const stageRequirementValue = buildStageRequirementValue(requiredPermissionCode, reviewGate.workflowGate, l);
   if (stageRequirementValue) {
     noteItems.push({
       label: l("Review / approve / lock requirement", "Inceleme / onay / kilit gereksinimi"),
@@ -582,12 +599,12 @@ export function buildLocalCloseRuntimeExplainabilityModel({
     headline: resolveHeadline(currentStatus, reviewGate, l),
     supportingText: resolveSupportingText(pack, reviewGate, requiredScopeLabel, l),
     workflowStatusLabel: resolveWorkflowStatusLabel(reviewGate.workflowGate, l),
-    currentStepLabel: resolveCurrentStepLabel(currentStatus, requiredPackageLabel, l),
-    requiredPackageLabel,
+    currentStepLabel: resolveCurrentStepLabel(currentStatus, requiredAuthorityLabel, l),
+    requiredAuthorityLabel,
     requiredScopeLabel,
     eligibleActorSummary: buildEligibleActorSummary(
-      requiredPackageCode,
-      requiredPackageLabel,
+      requiredPermissionCode,
+      requiredAuthorityLabel,
       requiredScopeLabel,
       currentStatus,
       l

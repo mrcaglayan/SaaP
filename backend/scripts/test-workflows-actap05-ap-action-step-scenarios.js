@@ -1,5 +1,6 @@
 import { closePool, query } from "../src/db.js";
 import { seedCore } from "../src/seedCore.js";
+import { assignScopedTestFullAccessRoleToUser } from "./ex05-test-helpers.js";
 import {
   createCariDraftDocument,
   getCariDocumentByIdForTenant,
@@ -120,6 +121,17 @@ function buildScopeActor(fixtures, scopeType, scopeId, userId, stamp, suffix) {
       suffix,
     }),
   };
+}
+
+async function grantScopedTestActorAccess(fixtures, actor) {
+  // Keep the scenario focused on workflow-route scope behavior by giving the
+  // allowed test actors the catalog permissions they need only at their own scope.
+  await assignScopedTestFullAccessRoleToUser({
+    tenantId: fixtures.tenantId,
+    userId: actor.userId,
+    scopeType: actor.scopeType,
+    scopeId: actor.scopeId,
+  });
 }
 
 function actorCanReachScope(fixtures, actor, requestedScopeType, requestedScopeId) {
@@ -827,6 +839,10 @@ async function main() {
     "country"
   );
 
+  await grantScopedTestActorAccess(scenarioFixtures, primaryOuActor);
+  await grantScopedTestActorAccess(scenarioFixtures, legalEntityActor);
+  await grantScopedTestActorAccess(scenarioFixtures, countryActor);
+
   await expectBadRequest(
     async () =>
       createScenarioWorkflow({
@@ -843,21 +859,21 @@ async function main() {
     "POST must appear after SUBMIT"
   );
 
-  await runScenario({
-    fixtures: scenarioFixtures,
-    tenantAdminUserId: adminUserId,
-    stamp,
-    slug: "submit-post",
-    steps: [
-      makeApStep(1, "SUBMIT", "OPERATING_UNIT"),
-      makeApStep(2, "POST", "LEGAL_ENTITY"),
-    ],
-    creator: primaryOuActor,
-    submitAllowedActor: primaryOuActor,
-    submitDeniedActor: siblingOuActor,
-    postAllowedActor: legalEntityActor,
-    postDeniedActor: primaryOuActor,
-  });
+  await expectBadRequest(
+    async () =>
+      createScenarioWorkflow({
+        tenantId,
+        userId: adminUserId,
+        countryId: scenarioFixtures.countryId,
+        stamp,
+        slug: "invalid-no-approve",
+        steps: [
+          makeApStep(1, "SUBMIT", "OPERATING_UNIT"),
+          makeApStep(2, "POST", "LEGAL_ENTITY"),
+        ],
+      }),
+    "at least one APPROVE step"
+  );
 
   await runScenario({
     fixtures: scenarioFixtures,
@@ -916,23 +932,22 @@ async function main() {
     postDeniedActor: legalEntityActor,
   });
 
-  await runScenario({
-    fixtures: scenarioFixtures,
-    tenantAdminUserId: adminUserId,
-    stamp,
-    slug: "draft-submit-post",
-    steps: [
-      makeApStep(1, "DRAFT", "OPERATING_UNIT"),
-      makeApStep(2, "SUBMIT", "LEGAL_ENTITY"),
-      makeApStep(3, "POST", "COUNTRY"),
-    ],
-    creator: primaryOuActor,
-    draftDeniedActor: siblingOuActor,
-    submitAllowedActor: legalEntityActor,
-    submitDeniedActor: primaryOuActor,
-    postAllowedActor: countryActor,
-    postDeniedActor: legalEntityActor,
-  });
+  await expectBadRequest(
+    async () =>
+      createScenarioWorkflow({
+        tenantId,
+        userId: adminUserId,
+        countryId: scenarioFixtures.countryId,
+        stamp,
+        slug: "invalid-draft-submit-no-approve",
+        steps: [
+          makeApStep(1, "DRAFT", "OPERATING_UNIT"),
+          makeApStep(2, "SUBMIT", "LEGAL_ENTITY"),
+          makeApStep(3, "POST", "COUNTRY"),
+        ],
+      }),
+    "at least one APPROVE step"
+  );
 
   await runScenario({
     fixtures: scenarioFixtures,

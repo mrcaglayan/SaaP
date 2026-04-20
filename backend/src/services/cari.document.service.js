@@ -7668,7 +7668,6 @@ function deriveApRuntimeEnrichment({
     currentStepNo: currentStep?.stepNo || null,
     totalSteps: runtimeContext.totalSteps,
     currentActionCode,
-    currentRequiredPackageCode: null,
     currentRequiredPermissionCode: currentStep?.requiredPermissionCode || null,
     currentStageScopeType,
     currentStageScopeLabel,
@@ -7709,7 +7708,6 @@ async function buildCariDocumentWorkflowGateSummary({
     currentStepNo: null,
     totalSteps: 0,
     currentActionCode: null,
-    currentRequiredPackageCode: null,
     currentRequiredPermissionCode: null,
     currentStageScopeType: null,
     currentStageScopeLabel: null,
@@ -9392,6 +9390,11 @@ export async function submitCariDocumentById({
   });
 }
 
+/**
+ * Cancels one editable draft or returned CARI document and records the
+ * transition in audit logs. Returned documents also cancel the latest live
+ * workflow instance bridge when the document owner abandons the correction flow.
+ */
 export async function cancelCariDraftDocumentById({
   req,
   payload,
@@ -9406,6 +9409,7 @@ export async function cancelCariDraftDocumentById({
   if (!existing) {
     throw badRequest("Document not found");
   }
+  const existingLegalEntityId = parsePositiveInt(existing.legal_entity_id);
 
   assertCariDocumentCanBeCancelled(existing);
   const existingStatus = normalizeUpperText(existing.status);
@@ -9480,7 +9484,7 @@ export async function cancelCariDraftDocumentById({
       tenantId,
       userId: payload.userId,
       action: "cari.document.cancel",
-      legalEntityId,
+      legalEntityId: existingLegalEntityId,
       documentId,
       payload: {
         beforeStatus: existing.status,

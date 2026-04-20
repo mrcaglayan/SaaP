@@ -37,7 +37,7 @@ function buildScopeSummary(entry) {
 
 function getRoleTypeLabel(entry) {
   if (entry?.managedPackageRole) {
-    return "Package-backed";
+    return "Managed authority";
   }
   if (entry?.companionOnly) {
     return "Companion";
@@ -51,7 +51,7 @@ function getRoleTypeLabel(entry) {
 function getRoleStateMeta(entry) {
   if (entry?.managedPackageRole) {
     return {
-      label: "Package",
+      label: "Managed",
       className: "border-blue-200 bg-blue-50 text-blue-800",
       showLock: false,
     };

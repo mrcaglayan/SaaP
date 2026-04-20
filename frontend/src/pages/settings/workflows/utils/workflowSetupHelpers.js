@@ -21,42 +21,23 @@ export const ASSIGNMENT_SCOPE_TYPES = [
 
 export const STEP_SCOPE_TYPES = ["OPERATING_UNIT", "LEGAL_ENTITY", "COUNTRY", "GROUP"];
 
-const WORKFLOW_PRESET_PRIMARY_PERMISSION_CODES = Object.freeze({
-  "PKG-LC-PREPARE": "ouclose.submit",
-  "PKG-LC-REVIEW": "ouclose.review",
-  "PKG-LC-APPROVE-LOCK": "ouclose.lock",
-  "PKG-LC-REOPEN-ADMIN": "ouclose.reopen",
-  "PKG-PC-READINESS": "org.fiscal_period.read",
-  "PKG-PC-CLOSE": "gl.period.close",
-  "PKG-PC-REOPEN": "gl.period.reopen",
-  "PKG-PC-ADMIN": "gl.period.admin",
-  "PKG-PC-CLOSED-PERIOD-POST": "gl.journal.post_to_closed_period",
-  "PKG-CON-PREPARE": "consolidation.run.create",
-  "PKG-CON-EXECUTE": "consolidation.run.execute",
-  "PKG-CON-ADJUST": "consolidation.adjustment.post",
-  "PKG-CON-ELIM": "consolidation.elimination.post",
-  "PKG-CON-FINALIZE": "consolidation.run.finalize",
-  "PKG-CON-SETUP": "consolidation.group.upsert",
-});
-
-const WORKFLOW_PERMISSION_TO_PACKAGE_CODE = Object.freeze({
-  "ouclose.prepare": "PKG-LC-PREPARE",
-  "ouclose.submit": "PKG-LC-PREPARE",
-  "ouclose.review": "PKG-LC-REVIEW",
-  "ouclose.approve": "PKG-LC-APPROVE-LOCK",
-  "ouclose.lock": "PKG-LC-APPROVE-LOCK",
-  "ouclose.reopen": "PKG-LC-REOPEN-ADMIN",
-  "org.fiscal_period.read": "PKG-PC-READINESS",
-  "gl.period.close": "PKG-PC-CLOSE",
-  "gl.period.reopen": "PKG-PC-REOPEN",
-  "gl.period.admin": "PKG-PC-ADMIN",
-  "gl.journal.post_to_closed_period": "PKG-PC-CLOSED-PERIOD-POST",
-  "consolidation.run.create": "PKG-CON-PREPARE",
-  "consolidation.run.execute": "PKG-CON-EXECUTE",
-  "consolidation.adjustment.post": "PKG-CON-ADJUST",
-  "consolidation.elimination.post": "PKG-CON-ELIM",
-  "consolidation.run.finalize": "PKG-CON-FINALIZE",
-  "consolidation.group.upsert": "PKG-CON-SETUP",
+const WORKFLOW_AUTHORITY_ALLOWED_SCOPES_BY_PERMISSION = Object.freeze({
+  "ouclose.prepare": Object.freeze(["LEGAL_ENTITY"]),
+  "ouclose.review": Object.freeze(["LEGAL_ENTITY", "COUNTRY"]),
+  "ouclose.approve": Object.freeze(["LEGAL_ENTITY", "COUNTRY"]),
+  "ouclose.lock": Object.freeze(["LEGAL_ENTITY", "COUNTRY"]),
+  "ouclose.reopen": Object.freeze(["COUNTRY", "GROUP"]),
+  "org.fiscal_period.read": Object.freeze(["LEGAL_ENTITY", "COUNTRY", "GROUP"]),
+  "gl.period.close": Object.freeze(["LEGAL_ENTITY", "COUNTRY"]),
+  "gl.period.reopen": Object.freeze(["LEGAL_ENTITY", "COUNTRY"]),
+  "gl.period.admin": Object.freeze(["COUNTRY", "GROUP"]),
+  "gl.journal.post_to_closed_period": Object.freeze(["LEGAL_ENTITY", "COUNTRY", "GROUP"]),
+  "consolidation.run.create": Object.freeze(["GROUP"]),
+  "consolidation.run.execute": Object.freeze(["GROUP"]),
+  "consolidation.adjustment.post": Object.freeze(["GROUP"]),
+  "consolidation.elimination.post": Object.freeze(["GROUP"]),
+  "consolidation.run.finalize": Object.freeze(["GROUP"]),
+  "consolidation.group.upsert": Object.freeze(["GROUP"]),
 });
 
 export const AP_WORKFLOW_ACTION_CODES = Object.freeze([
@@ -84,9 +65,6 @@ function normalizeWorkflowCatalogOptions(options = {}) {
   return {
     workflowAuthorityEntries: Array.isArray(options.workflowAuthorityEntries)
       ? options.workflowAuthorityEntries
-      : [],
-    workflowPackageEntries: Array.isArray(options.workflowPackageEntries)
-      ? options.workflowPackageEntries
       : [],
     workflowPresetEntries: Array.isArray(options.workflowPresetEntries)
       ? options.workflowPresetEntries
@@ -154,35 +132,6 @@ function deriveActionLabelFromAuthority(requiredPermissionCode, workflowAuthorit
   ).trim();
 }
 
-function getWorkflowPackageLabel(requiredPackageCode, workflowPackageEntries = []) {
-  const normalizedPackageCode = String(requiredPackageCode || "").trim().toUpperCase();
-  if (!normalizedPackageCode) {
-    return "";
-  }
-  const packageEntry = (Array.isArray(workflowPackageEntries) ? workflowPackageEntries : []).find(
-    (entry) => String(entry?.code || "").trim().toUpperCase() === normalizedPackageCode
-  );
-  return packageEntry?.displayName || normalizedPackageCode;
-}
-
-function deriveActionLabelFromPackage(requiredPackageCode, workflowPackageEntries = []) {
-  const packageLabel = getWorkflowPackageLabel(requiredPackageCode, workflowPackageEntries);
-  if (!packageLabel) {
-    return "";
-  }
-  const packageLabelParts = packageLabel.split("/");
-  return String(packageLabelParts[packageLabelParts.length - 1] || packageLabel).trim();
-}
-
-function getWorkflowPackagePrimaryPermissionCode(requiredPackageCode, processType) {
-  const normalizedProcessType = String(processType || "").toUpperCase();
-  if (normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE) {
-    return null;
-  }
-  const packageCode = String(requiredPackageCode || "").trim().toUpperCase();
-  return WORKFLOW_PRESET_PRIMARY_PERMISSION_CODES[packageCode] || "";
-}
-
 function normalizeApWorkflowActionCode(value) {
   const normalizedValue = String(value || "").trim().toUpperCase();
   return AP_WORKFLOW_ACTION_CODES.includes(normalizedValue) ? normalizedValue : "";
@@ -233,22 +182,6 @@ function inferApWorkflowStepActionCode(rawStep, fallbackAuthorityCode = "") {
     return "POST";
   }
 
-  // Temporary legacy fallback while older local step rows may still carry the
-  // removed package-coded AP contract before the cleanup migration lands.
-  const normalizedPackageCode = String(
-    rawStep?.requiredPackageCode ?? rawStep?.required_package_code ?? ""
-  )
-    .trim()
-    .toUpperCase();
-  if (normalizedPackageCode === "PKG-AP-APPROVE") {
-    return "APPROVE";
-  }
-  if (normalizedPackageCode === "PKG-AP-POST" || normalizedPackageCode === "PKG-AP-POST-GROUP") {
-    return "POST";
-  }
-  if (normalizedPackageCode === "PKG-AP-DRAFT-SUBMIT") {
-    return "SUBMIT";
-  }
   return "SUBMIT";
 }
 
@@ -283,27 +216,6 @@ export function getApWorkflowRequiredPermissionCode(actionCode) {
   ) || "";
 }
 
-function inferWorkflowStepPackageCode(rawStep, processType) {
-  const normalizedProcessType = String(processType || "").toUpperCase();
-  const explicitPackageCode = String(
-    rawStep?.requiredPackageCode ?? rawStep?.required_package_code ?? ""
-  )
-    .trim()
-    .toUpperCase();
-  if (explicitPackageCode) {
-    return explicitPackageCode;
-  }
-  if (normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE) {
-    return "";
-  }
-  const permissionCode = String(
-    rawStep?.requiredPermissionCode ?? rawStep?.required_permission_code ?? ""
-  )
-    .trim()
-    .toLowerCase();
-  return WORKFLOW_PERMISSION_TO_PACKAGE_CODE[permissionCode] || "";
-}
-
 function inferWorkflowStepActionLabel({
   rawStep,
   actionCode,
@@ -333,10 +245,7 @@ function inferWorkflowStepActionLabel({
     .flatMap((entry) => (Array.isArray(entry?.steps) ? entry.steps : []))
     .filter(
       (step) =>
-        normalizePermissionCode(
-          step?.requiredPermissionCode ||
-            getWorkflowPackagePrimaryPermissionCode(step?.requiredPackageCode, normalizedProcessType)
-        ) === normalizedPermissionCode
+        normalizePermissionCode(step?.requiredPermissionCode) === normalizedPermissionCode
     );
   const sameScopePresetMatch = presetStepMatches.find(
     (step) => String(step?.scopeType || "").trim().toUpperCase() === normalizedScopeType
@@ -376,31 +285,6 @@ export function listWorkflowStepAuthorityOptions({
 }
 
 /**
- * Lists the workflow packages the current builder can bind to for one workflow family.
- */
-export function listWorkflowStepPackageOptions({
-  processType,
-  workflowPackageEntries = [],
-}) {
-  const normalizedProcessType = String(processType || "").toUpperCase();
-  const familyEntries = (Array.isArray(workflowPackageEntries) ? workflowPackageEntries : []).filter(
-    (entry) => String(entry?.workflowFamily || "").toUpperCase() === normalizedProcessType
-  );
-  if (normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE) {
-    return [];
-  }
-  return familyEntries.filter((entry) => {
-    const normalizedCode = String(entry?.code || "").trim().toUpperCase();
-    return (
-      !normalizedCode.startsWith("PKG-WF-") &&
-      !normalizedCode.endsWith("-VIEW") &&
-      !normalizedCode.endsWith("-SETUP") &&
-      !normalizedCode.endsWith("-SETUP-ADMIN")
-    );
-  });
-}
-
-/**
  * Parses a positive integer from a mixed input.
  */
 export function toPositiveInt(value) {
@@ -437,7 +321,6 @@ export function buildDefaultSteps(processType) {
         stepNo: 1,
         actionCode: "SUBMIT",
         stageScopeType: "OPERATING_UNIT",
-        requiredPackageCode: null,
         requiredPermissionCode: getApWorkflowRequiredPermissionCode("SUBMIT"),
         minApproverCount: 1,
         allowSelfApprove: false,
@@ -446,7 +329,6 @@ export function buildDefaultSteps(processType) {
         stepNo: 2,
         actionCode: "APPROVE",
         stageScopeType: "LEGAL_ENTITY",
-        requiredPackageCode: null,
         requiredPermissionCode: getApWorkflowRequiredPermissionCode("APPROVE"),
         minApproverCount: 1,
         allowSelfApprove: false,
@@ -455,7 +337,6 @@ export function buildDefaultSteps(processType) {
         stepNo: 3,
         actionCode: "POST",
         stageScopeType: "LEGAL_ENTITY",
-        requiredPackageCode: null,
         requiredPermissionCode: getApWorkflowRequiredPermissionCode("POST"),
         minApproverCount: 1,
         allowSelfApprove: false,
@@ -522,11 +403,6 @@ export function normalizeStepDraft(rawStep, fallbackStepNo, processType, options
         step?.requiredPermissionCode ?? step?.required_permission_code ?? ""
       )
       : "";
-  const inferredPackageCode = inferWorkflowStepPackageCode(
-    step,
-    processType,
-    inferredActionCode
-  );
   const apDefaultScopeType =
     inferredActionCode === "DRAFT" || inferredActionCode === "SUBMIT"
       ? "OPERATING_UNIT"
@@ -542,8 +418,7 @@ export function normalizeStepDraft(rawStep, fallbackStepNo, processType, options
     normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
       ? String(step.requiredPermissionCode ?? step.required_permission_code ?? "").trim() ||
         getApWorkflowRequiredPermissionCode(inferredActionCode)
-      : String(step.requiredPermissionCode ?? step.required_permission_code ?? "").trim() ||
-        getWorkflowPackagePrimaryPermissionCode(inferredPackageCode, processType);
+      : String(step.requiredPermissionCode ?? step.required_permission_code ?? "").trim();
   const authorityDefinition =
     normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
       ? null
@@ -604,14 +479,6 @@ export function normalizeStepDraft(rawStep, fallbackStepNo, processType, options
             ) ??
             ""
         ).trim(),
-    requiredPackageCode:
-      normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
-        ? ""
-        : inferredPackageCode,
-    requiredPackageLabel: getWorkflowPackageLabel(
-      inferredPackageCode,
-      catalogOptions.workflowPackageEntries
-    ),
   };
 }
 
@@ -726,13 +593,12 @@ export function buildWorkflowPresetBaselineStepDrafts(presetEntry, options = {})
                   step?.requiredPermissionCode ?? step?.required_permission_code
                 )
               )
-            : getWorkflowPackagePrimaryPermissionCode(step?.requiredPackageCode, processType),
+            : String(step?.requiredPermissionCode || "").trim(),
         minApproverCount: Number(step?.minApproverCount || 1) || 1,
         allowSelfApprove: Boolean(step?.allowSelfApprove),
         escalationAfterHours:
           typeof step?.escalationAfterHours === "number" ? step.escalationAfterHours : null,
         actionLabel: step?.actionLabel || "",
-        requiredPackageCode: step?.requiredPackageCode || "",
       },
       index + 1,
       processType,
@@ -758,14 +624,7 @@ export function buildWorkflowPresetPreviewModel({
   const lines = steps.map((step, index) => {
     const scopeLabel = getScopeLabel(step?.scopeType, stepScopeLabels);
     const authorityLabel =
-      getWorkflowAuthorityLabel(
-        step?.requiredPermissionCode ||
-          getWorkflowPackagePrimaryPermissionCode(
-            step?.requiredPackageCode,
-            presetEntry.workflowFamily
-          ),
-        workflowAuthorityEntries
-      ) ||
+      getWorkflowAuthorityLabel(step?.requiredPermissionCode, workflowAuthorityEntries) ||
       step?.requiredPermissionCode ||
       "-";
     return l(
@@ -1122,9 +981,7 @@ export function buildWorkflowExplainabilityPreviewModel({
           actionLabel: step?.actionLabel || l("Step", "Adim"),
           requiredAuthorityLabel:
             step?.requiredAuthorityLabel ||
-            step?.requiredPermissionCode ||
-            step?.requiredPackageLabel ||
-            step?.requiredPackageCode,
+            step?.requiredPermissionCode,
           scopeType: step?.stageScopeType || "LEGAL_ENTITY",
           actorText: l("In-scope authority holders", "Kapsam ici yetki sahipleri"),
           minApproverCount: step?.minApproverCount,
@@ -1282,23 +1139,13 @@ export function buildWorkflowStepValidationModel({
   stepDrafts,
   processType,
   workflowAuthorityEntries = [],
-  workflowPackageEntries = [],
   coverageDiagnostics = null,
   stepScopeLabels = {},
   l,
 }) {
   const normalizedProcessType = String(processType || "").toUpperCase();
-  const packageEntriesByCode = new Map(
-    (Array.isArray(workflowPackageEntries) ? workflowPackageEntries : []).map((entry) => [
-      String(entry?.code || "").trim().toUpperCase(),
-      entry,
-    ])
-  );
 
   const steps = (Array.isArray(stepDrafts) ? stepDrafts : []).map((step, index) => {
-    const normalizedPackageCode = String(
-      step?.requiredPackageCode || inferWorkflowStepPackageCode(step, processType)
-    ).trim().toUpperCase();
     const normalizedPermissionCode = String(step?.requiredPermissionCode || "").trim();
     const normalizedScopeType = String(step?.stageScopeType || "").trim().toUpperCase();
     const normalizedActionCode =
@@ -1306,7 +1153,6 @@ export function buildWorkflowStepValidationModel({
         ? normalizeApWorkflowActionCode(step?.actionCode) ||
           inferApWorkflowStepActionCode(step, normalizedPermissionCode)
         : "";
-    const packageEntry = packageEntriesByCode.get(normalizedPackageCode) || null;
     const authorityDefinition =
       normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
         ? null
@@ -1324,9 +1170,6 @@ export function buildWorkflowStepValidationModel({
         : authorityDefinition?.displayName ||
           step?.requiredAuthorityLabel ||
           normalizedPermissionCode ||
-          packageEntry?.displayName ||
-          step?.requiredPackageLabel ||
-          normalizedPackageCode ||
           l("this step", "bu adim");
     const blockingIssues = [];
     const warningIssues = [];
@@ -1410,9 +1253,10 @@ export function buildWorkflowStepValidationModel({
         )
       );
     } else {
-      const allowedScopes = Array.isArray(packageEntry?.allowedScopes)
-        ? packageEntry.allowedScopes
-        : [];
+      const allowedScopes =
+        WORKFLOW_AUTHORITY_ALLOWED_SCOPES_BY_PERMISSION[
+          normalizePermissionCode(normalizedPermissionCode)
+        ] || [];
       const allowedScopeLabels = allowedScopes.map((scopeType) =>
         getScopeLabel(scopeType, stepScopeLabels)
       );
@@ -1420,7 +1264,7 @@ export function buildWorkflowStepValidationModel({
       if (
         normalizedProcessType === "PERIOD_CLOSE" &&
         normalizedScopeType === "GROUP" &&
-        normalizedPackageCode.startsWith("PKG-PC-")
+        normalizePermissionCode(normalizedPermissionCode) === "gl.period.close"
       ) {
         blockingIssues.push(
           buildWorkflowStepIssue(
@@ -1444,43 +1288,11 @@ export function buildWorkflowStepValidationModel({
         blockingIssues.push(
           buildWorkflowStepIssue(
             "error",
-            "package_scope_mismatch",
+            "authority_scope_mismatch",
             l("Authority scope mismatch", "Yetki kapsam uyusmazligi"),
             l(
               `${authorityLabel} supports ${allowedScopeLabels.join(", ")}, but this step uses ${getScopeLabel(normalizedScopeType, stepScopeLabels)}.`,
               `${authorityLabel}, ${allowedScopeLabels.join(", ")} destekler; ancak bu adim ${getScopeLabel(normalizedScopeType, stepScopeLabels)} kullaniyor.`
-            )
-          )
-        );
-      }
-
-      if (packageEntry?.plannedExtension && normalizedPackageCode !== "PKG-AP-POST-GROUP") {
-        blockingIssues.push(
-          buildWorkflowStepIssue(
-            "error",
-            "planned_extension",
-            l("Extension not enabled", "Extension etkin degil"),
-            packageEntry.extensionNote ||
-              l(
-                "This workflow authority depends on an extension that is not enabled yet.",
-                "Bu workflow yetkisi henuz etkin olmayan bir extension'a baglidir."
-              )
-          )
-        );
-      }
-
-      const runtimeNotes = Array.isArray(packageEntry?.runtimeNotes)
-        ? packageEntry.runtimeNotes
-        : [];
-      if (runtimeNotes.length > 0) {
-        warningIssues.push(
-          buildWorkflowStepIssue(
-            "warning",
-            "runtime_source_note",
-            l("Current seeded-role mapping", "Mevcut seeded-role eslemesi"),
-            l(
-              `Informational only. ${runtimeNotes[0]}`,
-              `Yalnizca bilgi icindir. ${runtimeNotes[0]}`
             )
           )
         );
@@ -2163,9 +1975,7 @@ export function buildStepPreview(step, processType, stepScopeLabels, l) {
   const scopeLabel = getScopeLabel(step?.stageScopeType, stepScopeLabels);
   const authorityLabel =
     step?.requiredAuthorityLabel ||
-    step?.requiredPackageLabel ||
     step?.requiredPermissionCode ||
-    step?.requiredPackageCode ||
     "-";
   const actionCode =
     normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
@@ -2175,7 +1985,7 @@ export function buildStepPreview(step, processType, stepScopeLabels, l) {
   const actionLabel =
     normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
       ? getLocalizedApWorkflowActionLabel(actionCode, l)
-      : step?.actionLabel || step?.requiredAuthorityLabel || deriveActionLabelFromPackage(step?.requiredPackageCode);
+      : step?.actionLabel || step?.requiredAuthorityLabel || step?.requiredPermissionCode;
   const minCount =
     normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE && actionCode !== "APPROVE"
       ? 1
@@ -2257,7 +2067,7 @@ export function buildWorkflowPreview(stepDrafts, stepScopeLabels, l) {
           } at ${getScopeLabel(
             step?.stageScopeType,
             stepScopeLabels
-          )} using ${step?.requiredAuthorityLabel || step?.requiredPackageLabel || step?.requiredPermissionCode || step?.requiredPackageCode || "-"}`
+          )} using ${step?.requiredAuthorityLabel || step?.requiredPermissionCode || "-"}`
       )
       .join(" -> ")}.`,
     `Bu workflow su sirada calisir: ${steps
@@ -2270,7 +2080,7 @@ export function buildWorkflowPreview(stepDrafts, stepScopeLabels, l) {
           } - ${getScopeLabel(
             step?.stageScopeType,
             stepScopeLabels
-          )} kapsaminda ${step?.requiredAuthorityLabel || step?.requiredPackageLabel || step?.requiredPermissionCode || step?.requiredPackageCode || "-"}`
+          )} kapsaminda ${step?.requiredAuthorityLabel || step?.requiredPermissionCode || "-"}`
       )
       .join(" -> ")}.`
   );
@@ -2835,7 +2645,6 @@ export default {
   buildDefaultSteps,
   getApWorkflowRequiredPermissionCode,
   listWorkflowStepAuthorityOptions,
-  listWorkflowStepPackageOptions,
   safeParseJsonArray,
   normalizeStepDraft,
   buildStepDrafts,

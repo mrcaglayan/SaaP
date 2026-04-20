@@ -41,8 +41,8 @@ export function buildRoleAttentionItems(entry, l) {
   if (entry?.managedPackageRole) {
     items.push(
       l(
-        "Managed through the workflow package UX so the runtime permission set stays aligned to the package definition.",
-        "Runtime yetki seti paket tanimiyla uyumlu kalsin diye workflow package UX uzerinden yonetilir."
+        "Managed through workflow governance so the runtime permission set stays aligned to the shipped authority model.",
+        "Runtime yetki seti hazir yetki modeliyle uyumlu kalsin diye workflow governance uzerinden yonetilir."
       )
     );
   }

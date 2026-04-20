@@ -127,6 +127,34 @@ function buildCountryBranchKey(groupId, countryId) {
   return `COUNTRY:${countryId}:GROUP:${groupId}`;
 }
 
+function collectRelevantOrgTreeCountryIds(scopeContext, legalEntityRows = []) {
+  const relevantCountryIds = new Set();
+
+  for (const row of legalEntityRows) {
+    const countryId = parsePositiveInt(row?.country_id);
+    if (countryId) {
+      relevantCountryIds.add(countryId);
+    }
+  }
+
+  for (const countryId of Array.from(scopeContext?.countries || [])) {
+    const parsedCountryId = parsePositiveInt(countryId);
+    if (parsedCountryId) {
+      relevantCountryIds.add(parsedCountryId);
+    }
+  }
+
+  return relevantCountryIds;
+}
+
+function filterOrgTreeCountryRows(countryRows = [], relevantCountryIds = new Set()) {
+  if (!(relevantCountryIds instanceof Set) || relevantCountryIds.size === 0) {
+    return [];
+  }
+
+  return countryRows.filter((row) => relevantCountryIds.has(parsePositiveInt(row?.id)));
+}
+
 /**
  * Build the canonical nested org-tree response from backend-owned rows and the
  * request visibility scope. Ancestor-only nodes stay in the tree for
@@ -152,6 +180,7 @@ export function buildNestedOrgTreeResponse({
   const countryRows = Array.isArray(countries) ? countries : [];
   const legalEntityRows = Array.isArray(legalEntities) ? legalEntities : [];
   const operatingUnitRows = Array.isArray(operatingUnits) ? operatingUnits : [];
+  const relevantCountryIds = collectRelevantOrgTreeCountryIds(scopeContext, legalEntityRows);
 
   const groupIds = [];
   const groupRowsById = new Map();
@@ -169,7 +198,7 @@ export function buildNestedOrgTreeResponse({
   const countryOrder = new Map();
   for (const row of countryRows) {
     const countryId = parsePositiveInt(row?.id);
-    if (!countryId || countryRowsById.has(countryId)) {
+    if (!countryId || countryRowsById.has(countryId) || !relevantCountryIds.has(countryId)) {
       continue;
     }
     countryRowsById.set(countryId, row);
@@ -478,6 +507,7 @@ export function buildNestedOrgTreeResponse({
 }
 
 async function listFlatOrgTree({ req, tenantId, buildScopeFilter }) {
+  const scopeContext = getVisibilityScope(req);
   const groupParams = [];
   const groupFilter = buildScopeFilter(req, "group", "id", groupParams);
 
@@ -487,9 +517,6 @@ async function listFlatOrgTree({ req, tenantId, buildScopeFilter }) {
   const unitParams = [];
   const unitFilter = buildScopeFilter(req, "operating_unit", "ou.id", unitParams);
 
-  const countryParams = [];
-  const countryFilter = buildScopeFilter(req, "country", "c.id", countryParams);
-
   const [groups, countries, legalEntities, operatingUnits] = await Promise.all([
     fetchTreeGroupRows({
       tenantId,
@@ -497,8 +524,8 @@ async function listFlatOrgTree({ req, tenantId, buildScopeFilter }) {
       params: groupParams,
     }),
     fetchTreeCountryRows({
-      scopeFilter: countryFilter,
-      params: countryParams,
+      scopeFilter: "1 = 1",
+      params: [],
     }),
     fetchTreeLegalEntityRows({
       tenantId,
@@ -511,16 +538,18 @@ async function listFlatOrgTree({ req, tenantId, buildScopeFilter }) {
       params: unitParams,
     }),
   ]);
+  const relevantCountryIds = collectRelevantOrgTreeCountryIds(scopeContext, legalEntities);
 
   return {
     groups,
-    countries,
+    countries: filterOrgTreeCountryRows(countries, relevantCountryIds),
     legalEntities,
     operatingUnits,
   };
 }
 
 async function listNestedOrgTree({ req, tenantId }) {
+  const scopeContext = getVisibilityScope(req);
   const [groups, countries, legalEntities, operatingUnits] = await Promise.all([
     fetchTreeGroupRows({
       tenantId,
@@ -545,9 +574,12 @@ async function listNestedOrgTree({ req, tenantId }) {
 
   return buildNestedOrgTreeResponse({
     tenantId,
-    scopeContext: getVisibilityScope(req),
+    scopeContext,
     groups,
-    countries,
+    countries: filterOrgTreeCountryRows(
+      countries,
+      collectRelevantOrgTreeCountryIds(scopeContext, legalEntities)
+    ),
     legalEntities,
     operatingUnits,
   });

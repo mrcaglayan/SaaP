@@ -24,7 +24,6 @@ import ConsolidationSetupPage from "./pages/settings/ConsolidationSetupPage";
 import TaxSetupPage from "./pages/settings/TaxSetupPage.jsx";
 import RolesPermissionsPage from "./pages/security/RolesPermissionsPage";
 import RolePermissionsDetailPage from "./pages/security/RolePermissionsDetailPage.jsx";
-import AccessModelCatalogPage from "./pages/security/AccessModelCatalogPage.jsx";
 import FieldVisibilityPoliciesPage from "./pages/security/FieldVisibilityPoliciesPage.jsx";
 import ApprovalDelegationsPage from "./pages/security/ApprovalDelegationsPage.jsx";
 import TemporaryOperationalCoveragePage from "./pages/security/TemporaryOperationalCoveragePage.jsx";
@@ -178,10 +177,6 @@ const MODULE_PREVIEW_ADMIN_PERMISSIONS = [
   "security.role.upsert",
   "security.role_permissions.assign",
 ];
-const LEGACY_CATALOG_MODEL_TABS = new Set([
-  "workflow_packages",
-  "workflow_presets",
-]);
 const PERIODIZATION_REVENUE_CANONICAL_PATH = "/app/gelecek-yillar-gelirleri";
 const routeLoadingFallback = (
   <div className="grid min-h-[32vh] place-items-center">
@@ -206,7 +201,7 @@ function buildMergedNavigationTarget(to, currentSearch = "", currentHash = "") {
 function renderSecurityAdminSurface(surfaceKey) {
   switch (surfaceKey) {
     case "access-model":
-      return <AccessModelCatalogPage />;
+      return <Navigate to="/app/ayarlar/security-admin/catalog?tab=field-visibility" replace />;
     case "roles-permissions":
       return <RolesPermissionsPage />;
     case "user-assignments":
@@ -1024,23 +1019,6 @@ function SecurityAdminWorkbenchAdapter({ routeKey }) {
     return (
       <Navigate
         to={`${ROLES_PERMISSIONS_CANONICAL_PATH}${nextSearch ? `?${nextSearch}` : ""}${location.hash || ""}`}
-        replace
-      />
-    );
-  }
-
-  if (
-    route.key === "catalog" &&
-    LEGACY_CATALOG_MODEL_TABS.has(requestedTab)
-  ) {
-    searchParams.set("tab", "access-model");
-    if (searchParams.get("modelTab") !== requestedTab) {
-      searchParams.set("modelTab", requestedTab);
-    }
-    const nextSearch = searchParams.toString();
-    return (
-      <Navigate
-        to={`${route.appPath}${nextSearch ? `?${nextSearch}` : ""}${location.hash || ""}`}
         replace
       />
     );

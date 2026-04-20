@@ -1,5 +1,3 @@
-import { isWorkflowPackageAssignmentRoleCode } from "./roleCatalog.js";
-
 function normalizeArray(value) {
   return Array.isArray(value) ? value : null;
 }
@@ -38,10 +36,7 @@ function countDirectRuntimeAssignments(assignments) {
     return null;
   }
 
-  return assignments.filter((row) => {
-    const roleCode = row?.role_code || row?.roleCode;
-    return roleCode && !isWorkflowPackageAssignmentRoleCode(roleCode);
-  }).length;
+  return assignments.filter((row) => Boolean(row?.role_code || row?.roleCode)).length;
 }
 
 function countActiveDelegations(delegations) {

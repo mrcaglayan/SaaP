@@ -171,17 +171,17 @@ export const SECURITY_ADMIN_WORKSPACE_SECTIONS = Object.freeze([
   Object.freeze({
     key: "catalog",
     currentSectionKeys: Object.freeze(["catalog"]),
-    currentPath: "/app/ayarlar/rbac/access-model",
+    currentPath: "/app/ayarlar/rbac/field-visibility-policies",
     accessPath: SECURITY_ADMIN_ROUTE_FAMILY.catalog,
     futurePath: SECURITY_ADMIN_ROUTE_FAMILY.catalog,
-    defaultSearch: "?tab=access-model",
+    defaultSearch: "?tab=field-visibility",
     label: Object.freeze({
       en: "Access Catalog",
       tr: "Erisim Katalogu",
     }),
     description: Object.freeze({
-      en: "Browse runtime roles, workflow packages, presets, and companion catalog policies in one domain.",
-      tr: "Runtime roller, workflow paketleri, presetler ve kataloga bagli politikalarin tamamini tek alanda inceleyin.",
+      en: "Browse field-level controls and companion catalog policies in one domain.",
+      tr: "Alan-seviyesi kontrolleri ve kataloga bagli yardimci politikalari tek alanda inceleyin.",
     }),
   }),
   Object.freeze({
@@ -240,13 +240,13 @@ export const SECURITY_ADMIN_PRIMARY_SURFACES = Object.freeze([
     }),
   }),
   Object.freeze({
-    key: "access-model",
+    key: "field-visibility",
     workspaceSectionKey: "catalog",
-    to: "/app/ayarlar/security-admin/catalog?tab=access-model",
-    accessPath: "/app/ayarlar/rbac/access-model",
+    to: "/app/ayarlar/security-admin/catalog?tab=field-visibility",
+    accessPath: "/app/ayarlar/rbac/field-visibility-policies",
     label: Object.freeze({
-      en: "Access model",
-      tr: "Erisim modeli",
+      en: "Field visibility",
+      tr: "Alan gorunurlugu",
     }),
   }),
   Object.freeze({
@@ -324,24 +324,6 @@ export const SECURITY_ADMIN_COMPANION_LINKS = Object.freeze([
     label: Object.freeze({
       en: "Group AP post extension",
       tr: "Grup AP kaydi uzantisi",
-    }),
-  }),
-  Object.freeze({
-    workspaceSectionKey: "workflows",
-    to: "/app/ayarlar/security-admin/catalog?tab=access-model&modelTab=workflow_packages",
-    accessPath: "/app/ayarlar/rbac/access-model",
-    label: Object.freeze({
-      en: "Workflow packages",
-      tr: "Workflow paketleri",
-    }),
-  }),
-  Object.freeze({
-    workspaceSectionKey: "workflows",
-    to: "/app/ayarlar/security-admin/catalog?tab=access-model&modelTab=workflow_presets",
-    accessPath: "/app/ayarlar/rbac/access-model",
-    label: Object.freeze({
-      en: "Workflow presets",
-      tr: "Workflow presetleri",
     }),
   }),
   Object.freeze({
@@ -440,13 +422,8 @@ export const SECURITY_ADMIN_ROUTE_ADAPTERS = Object.freeze([
     appPath: SECURITY_ADMIN_ROUTE_FAMILY.catalog,
     childPath: "ayarlar/security-admin/catalog",
     permissionPath: SECURITY_ADMIN_ROUTE_FAMILY.catalog,
-    defaultTab: "access-model",
+    defaultTab: "field-visibility",
     tabs: Object.freeze([
-      Object.freeze({
-        key: "access-model",
-        permissionPath: "/app/ayarlar/rbac/access-model",
-        surfaceKey: "access-model",
-      }),
       Object.freeze({
         key: "roles",
         permissionPath: "/app/ayarlar/rbac/roles-permissions",
@@ -571,7 +548,7 @@ export const SECURITY_ADMIN_ROUTE_TRANSITION_PLAN = Object.freeze([
   Object.freeze({
     currentPath: "/app/ayarlar/rbac/access-model",
     futurePath: SECURITY_ADMIN_ROUTE_FAMILY.catalog,
-    defaultSearch: "?tab=access-model",
+    defaultSearch: "?tab=field-visibility",
     transitionType: "redirect-only-compatibility-route",
   }),
   Object.freeze({
@@ -1270,7 +1247,7 @@ export const sidebarItems = [
           },
           {
             label: "Erisim Katalogu",
-            to: "/app/ayarlar/security-admin/catalog?tab=access-model",
+            to: "/app/ayarlar/security-admin/catalog?tab=field-visibility",
             requiredPermissions: SECURITY_ADMIN_CATALOG_WORKBENCH_PAGE_PERMISSIONS,
             implemented: true,
           },

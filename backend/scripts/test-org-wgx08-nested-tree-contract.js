@@ -127,18 +127,15 @@ async function main() {
   assert.equal(tenantWideTree.root.selectable, true);
   assert.equal(tenantWideTree.root.key, "TENANT:77");
   assert.deepEqual(tenantWideTree.root.pathLabels, ["Tenant"]);
-  assert.equal(tenantWideTree.root.children.length, 3);
+  assert.equal(tenantWideTree.root.children.length, 2);
 
   const northGroup = findChild(tenantWideTree.root, "GROUP", 10);
   const southGroup = findChild(tenantWideTree.root, "GROUP", 20);
-  const fallbackCountry = findChild(tenantWideTree.root, "COUNTRY", 2);
   assert.ok(northGroup);
   assert.ok(southGroup);
-  assert.ok(fallbackCountry);
   assert.equal(northGroup.selectable, true);
   assert.deepEqual(northGroup.pathLabels, ["Tenant", "North Hub Group"]);
-  assert.equal(fallbackCountry.key, "COUNTRY:2");
-  assert.equal(fallbackCountry.selectable, true);
+  assert.equal(findChild(tenantWideTree.root, "COUNTRY", 2), undefined);
 
   const northTurkey = findChild(northGroup, "COUNTRY", 1);
   const southTurkey = findChild(southGroup, "COUNTRY", 1);

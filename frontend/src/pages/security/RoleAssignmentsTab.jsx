@@ -2,8 +2,8 @@ import { useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
 
 const USER_ASSIGNMENTS_PATH = "/app/ayarlar/security-admin/users?tab=assignments";
-const WORKFLOW_PACKAGES_PATH =
-  "/app/ayarlar/security-admin/catalog?tab=access-model&modelTab=workflow_packages";
+const WORKFLOW_PRESETS_PATH =
+  "/app/ayarlar/security-admin/catalog?tab=access-model&modelTab=workflow_presets";
 
 function normalizeText(value) {
   return String(value || "").trim();
@@ -93,9 +93,9 @@ function SummaryMetric({ label, value }) {
 
 /**
  * Renders the role detail assignments tab by surfacing direct runtime-role
- * usage plus the existing routes where admins manage users and package-backed
+ * usage plus the existing routes where admins manage users and managed authority
  * authority around the selected role. It also exposes scroll targets so the
- * detail-page quick actions can jump straight to assignments or package context.
+ * detail-page quick actions can jump straight to assignments or preset context.
  */
 export default function RoleAssignmentsTab({
   assignments = [],
@@ -146,7 +146,7 @@ export default function RoleAssignmentsTab({
               {l("Assignments", "Atamalar")}
             </div>
             <h3 className="mt-2 text-xl font-semibold text-slate-950">
-              {l("Role usage and package context", "Rol kullanimi ve paket baglami")}
+              {l("Role usage and preset context", "Rol kullanimi ve paket baglami")}
             </h3>
             <p className="mt-2 text-sm leading-6 text-slate-600">
               {l(
@@ -163,10 +163,10 @@ export default function RoleAssignmentsTab({
               {l("Open user assignments", "Kullanici atamalarini ac")}
             </Link>
             <Link
-              to={WORKFLOW_PACKAGES_PATH}
+              to={WORKFLOW_PRESETS_PATH}
               className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
             >
-              {l("Open workflow packages", "Workflow paketlerini ac")}
+              {l("Open workflow presets", "Workflow presetlerini ac")}
             </Link>
           </div>
         </div>
@@ -294,7 +294,7 @@ export default function RoleAssignmentsTab({
           </div>
           <div className="mt-2 text-sm leading-6 text-slate-600">
             {l(
-              "Workflow-package context inferred from the selected runtime role. Use the package catalog when this role should stay aligned to a managed package.",
+              "Workflow-preset context inferred from the selected runtime role. Use the package catalog when this role should stay aligned to a managed package.",
               "Secili runtime rolden cikarilan workflow-paket baglami. Bu rolun yonetilen bir paketle uyumlu kalmasi gerektiginde paket katalogunu kullanin."
             )}
           </div>

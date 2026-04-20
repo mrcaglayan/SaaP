@@ -9,7 +9,6 @@ import {
   AP_DOCUMENT_WORKFLOW_PROCESS_TYPE,
 } from "../../../../../../shared/cariDocumentWorkflowGovernance.js";
 import ApprovalStepCard from "./ApprovalStepCard.jsx";
-import WorkflowExplainabilityPreviewPanel from "./WorkflowExplainabilityPreviewPanel.jsx";
 
 function SummaryInfoBox({ label, value, subtext, tone = "default" }) {
   const valueToneClassName =
@@ -103,7 +102,6 @@ export default function WorkflowStepsBuilderStep({
   coverageDiagnosticsLoading = false,
   coverageDiagnosticsError = "",
   canReadCoverageDiagnostics = false,
-  workflowExplainabilityPreview = null,
   apBusinessLabels,
 }) {
   const isAp = String(processType || "").toUpperCase() === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE;
@@ -126,9 +124,6 @@ export default function WorkflowStepsBuilderStep({
       }))
     )
     .slice(0, 2);
-  const explainabilityLeadEntry = Array.isArray(workflowExplainabilityPreview?.entries)
-    ? workflowExplainabilityPreview.entries[0]
-    : null;
   const selectedPresetApplied = Boolean(
     selectedWorkflowPreset && workflowPresetComparison?.matchesBaseline
   );
@@ -409,17 +404,6 @@ export default function WorkflowStepsBuilderStep({
                         "workflow.assignment.read is required to surface in-scope actor warnings here.",
                         "Burada kapsam ici aktor uyarilarini gosterebilmek icin workflow.assignment.read gerekir."
                       )}
-                    />
-                  ) : null}
-                  {workflowExplainabilityPreview?.summaryText || explainabilityLeadEntry?.lineText ? (
-                    <DiagnosticNotice
-                      tone="slate"
-                      title={l("Explainability preview", "Aciklanabilirlik onizlemesi")}
-                      text={
-                        workflowExplainabilityPreview?.summaryText ||
-                        explainabilityLeadEntry?.lineText ||
-                        workflowPreviewText
-                      }
                     />
                   ) : null}
                 </div>
@@ -748,11 +732,6 @@ export default function WorkflowStepsBuilderStep({
                 : l("Show advanced JSON", "Gelismis JSON'u goster")}
             </Button>
           </div>
-          <WorkflowExplainabilityPreviewPanel
-            title={l("Explainability preview", "Aciklanabilirlik onizlemesi")}
-            previewModel={workflowExplainabilityPreview}
-            tone="blue"
-          />
           {stepTable}
           {showAdvancedJson ? (
             <>

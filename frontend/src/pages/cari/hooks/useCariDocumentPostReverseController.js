@@ -1276,10 +1276,10 @@ export default function useCariDocumentPostReverseController({
         "Belge goruntuleme yetkiniz olmadigi icin bu belgeyi inceleyemezsiniz."
       );
     }
-    if (workflowExplanation?.requiredPackageLabel && workflowExplanation?.requiredScopeType) {
+    if (workflowExplanation?.requiredAuthorityLabel && workflowExplanation?.requiredScopeType) {
       return l(
-        `You can view this document but cannot approve it because ${workflowExplanation.requiredPackageLabel} is required at ${workflowExplanation.requiredScopeType} scope.`,
-        `Bu belgeyi goruntuleyebilirsiniz ancak onaylayamazsiniz; cunku ${workflowExplanation.requiredScopeType} kapsaminda ${workflowExplanation.requiredPackageLabel} gerekir.`
+        `You can view this document but cannot approve it because ${workflowExplanation.requiredAuthorityLabel} is required at ${workflowExplanation.requiredScopeType} scope.`,
+        `Bu belgeyi goruntuleyebilirsiniz ancak onaylayamazsiniz; cunku ${workflowExplanation.requiredScopeType} kapsaminda ${workflowExplanation.requiredAuthorityLabel} gerekir.`
       );
     }
     if (!canApproveWorkflow) {
@@ -1299,7 +1299,7 @@ export default function useCariDocumentPostReverseController({
     canRead,
     l,
     showApprovalActionsSection,
-    workflowExplanation?.requiredPackageLabel,
+    workflowExplanation?.requiredAuthorityLabel,
     workflowExplanation?.requiredScopeType,
   ]);
 
@@ -1361,11 +1361,11 @@ export default function useCariDocumentPostReverseController({
         "Bu belge mevcut erisim baglaminizda gorunur olmadigi icin kaydedemezsiniz."
       );
     }
-    if (isApGovernedDocument && workflowExplanation?.requiredPackageLabel && workflowExplanation?.requiredScopeType) {
+    if (isApGovernedDocument && workflowExplanation?.requiredAuthorityLabel && workflowExplanation?.requiredScopeType) {
       if (selectedWorkflowGateState === "PENDING") {
         return l(
-          `You can view this document but cannot post it because it is waiting for ${workflowExplanation.requiredPackageLabel} at ${workflowExplanation.requiredScopeType} scope.`,
-          `Bu belgeyi goruntuleyebilirsiniz ancak kaydedemezsiniz; cunku ${workflowExplanation.requiredScopeType} kapsaminda ${workflowExplanation.requiredPackageLabel} bekleniyor.`
+          `You can view this document but cannot post it because it is waiting for ${workflowExplanation.requiredAuthorityLabel} at ${workflowExplanation.requiredScopeType} scope.`,
+          `Bu belgeyi goruntuleyebilirsiniz ancak kaydedemezsiniz; cunku ${workflowExplanation.requiredScopeType} kapsaminda ${workflowExplanation.requiredAuthorityLabel} bekleniyor.`
         );
       }
       if (selectedWorkflowGateState === "BLOCKED") {
@@ -1388,8 +1388,8 @@ export default function useCariDocumentPostReverseController({
       }
       if (selectedWorkflowGateState === "APPROVED" && !canPost) {
         return l(
-          `You can view this document but cannot post it because ${workflowExplanation.requiredPackageLabel} is required at ${workflowExplanation.requiredScopeType} scope.`,
-          `Bu belgeyi goruntuleyebilirsiniz ancak kaydedemezsiniz; cunku ${workflowExplanation.requiredScopeType} kapsaminda ${workflowExplanation.requiredPackageLabel} gerekir.`
+          `You can view this document but cannot post it because ${workflowExplanation.requiredAuthorityLabel} is required at ${workflowExplanation.requiredScopeType} scope.`,
+          `Bu belgeyi goruntuleyebilirsiniz ancak kaydedemezsiniz; cunku ${workflowExplanation.requiredScopeType} kapsaminda ${workflowExplanation.requiredAuthorityLabel} gerekir.`
         );
       }
     }
@@ -1434,7 +1434,7 @@ export default function useCariDocumentPostReverseController({
     selectedDocumentStatus,
     selectedWorkflowGate?.currentActionCode,
     selectedWorkflowGateState,
-    workflowExplanation?.requiredPackageLabel,
+    workflowExplanation?.requiredAuthorityLabel,
     workflowExplanation?.requiredScopeType,
   ]);
 

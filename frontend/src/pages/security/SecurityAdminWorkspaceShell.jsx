@@ -104,8 +104,8 @@ const DEFAULT_WORKSPACE_GUIDANCE = Object.freeze({
           tr: "Nesne hiyerarsisi ile baslayin",
         }),
         description: Object.freeze({
-          en: "Business roles, workflow packages, and presets should remain readable as distinct catalog objects.",
-          tr: "Is rolleri, workflow paketleri ve presetler ayri katalog nesneleri olarak okunabilir kalmalidir.",
+          en: "Business roles and workflow presets should remain readable as distinct catalog objects.",
+          tr: "Is rolleri ve workflow presetleri ayri katalog nesneleri olarak okunabilir kalmalidir.",
         }),
       }),
       Object.freeze({
@@ -175,8 +175,8 @@ const DEFAULT_WORKSPACE_GUIDANCE = Object.freeze({
           tr: "Setup'i bilincli degisim icin kullanin",
         }),
         description: Object.freeze({
-          en: "Drop into the wizard only when you are creating or editing a specific workflow package.",
-          tr: "Sihirbaza yalnizca belirli bir workflow paketini olustururken veya duzenlerken girin.",
+          en: "Drop into the wizard only when you are creating or editing a specific workflow definition.",
+          tr: "Sihirbaza yalnizca belirli bir workflow tanimini olustururken veya duzenlerken girin.",
         }),
       }),
     ]),

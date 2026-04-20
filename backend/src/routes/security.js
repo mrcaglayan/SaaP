@@ -92,7 +92,6 @@ const BRANCH_OPERATOR_COMPANION_CLEANUP_ROLE_CODES = Object.freeze([
   ...BRANCH_OPERATOR_COMPANION_ROLE_CODES,
 ]);
 const BUSINESS_ROLE_ASSIGNMENT_ROLE_PREFIX = "BUSINESS_ROLE__";
-const WORKFLOW_PACKAGE_ASSIGNMENT_ROLE_PREFIX = "WORKFLOW_PACKAGE__";
 const LOCAL_USER_ADMIN_COMPAT_PERMISSION_CODES = Object.freeze([
   LOCAL_USER_ADMIN_PERMISSION,
   ENTITY_USER_ADMIN_PERMISSION,
@@ -142,13 +141,6 @@ function isBusinessRoleAssignmentRoleCode(roleCode) {
     .startsWith(BUSINESS_ROLE_ASSIGNMENT_ROLE_PREFIX);
 }
 
-function isWorkflowPackageAssignmentRoleCode(roleCode) {
-  return String(roleCode || "")
-    .trim()
-    .toUpperCase()
-    .startsWith(WORKFLOW_PACKAGE_ASSIGNMENT_ROLE_PREFIX);
-}
-
 function assertBusinessRoleLabelRolePermissionsNotManaged(role) {
   if (isBusinessRoleAssignmentRoleCode(role?.code)) {
     // Legacy business-label roles are retired and must stay hidden from new
@@ -159,26 +151,10 @@ function assertBusinessRoleLabelRolePermissionsNotManaged(role) {
   }
 }
 
-function assertWorkflowPackageAssignmentRolePermissionsNotManaged(role) {
-  if (isWorkflowPackageAssignmentRoleCode(role?.code)) {
-    throw badRequest(
-      "Workflow-package managed roles are retired and cannot be edited.",
-    );
-  }
-}
-
 function assertBusinessRoleLabelRoleRetired(role) {
   if (isBusinessRoleAssignmentRoleCode(role?.code)) {
     throw badRequest(
       "Legacy business-role label assignments are retired. Apply runtime roles instead.",
-    );
-  }
-}
-
-function assertWorkflowPackageAssignmentRoleRetired(role) {
-  if (isWorkflowPackageAssignmentRoleCode(role?.code)) {
-    throw badRequest(
-      "Workflow-package assignments are retired. Apply runtime roles instead.",
     );
   }
 }
@@ -716,7 +692,6 @@ function assertRoleAssignmentUpsertAllowed(role) {
     return;
   }
   assertRetiredSecurityRoleNotManaged(role);
-  assertWorkflowPackageAssignmentRoleRetired(role);
 }
 
 function normalizeRoleCodeList(values) {
@@ -2037,8 +2012,7 @@ router.get(
     const visibleRows = (result.rows || []).filter(
       (row) =>
         !isRetiredSecurityRoleCode(row.code) &&
-        !isBusinessRoleAssignmentRoleCode(row.code) &&
-        !isWorkflowPackageAssignmentRoleCode(row.code),
+        !isBusinessRoleAssignmentRoleCode(row.code),
     );
     if (!includePermissions || visibleRows.length === 0) {
       return res.json({ tenantId, rows: visibleRows });
@@ -2089,7 +2063,6 @@ router.post(
     const isSystem = Boolean(req.body.isSystem);
     assertRetiredSecurityRoleNotManaged(code);
     assertBusinessRoleLabelRoleRetired({ code });
-    assertWorkflowPackageAssignmentRoleRetired({ code });
 
     const existingRoleResult = await query(
       `SELECT id
@@ -2186,7 +2159,6 @@ router.post(
     }
     assertRetiredSecurityRoleNotManaged(role);
     assertBusinessRoleLabelRolePermissionsNotManaged(role);
-    assertWorkflowPackageAssignmentRolePermissionsNotManaged(role);
 
     const permissionCodes = Array.isArray(req.body?.permissionCodes)
       ? normalizePermissionCodeList(req.body.permissionCodes)
@@ -2253,7 +2225,6 @@ router.put(
     }
     assertRetiredSecurityRoleNotManaged(role);
     assertBusinessRoleLabelRolePermissionsNotManaged(role);
-    assertWorkflowPackageAssignmentRolePermissionsNotManaged(role);
 
     const permissionCodesRaw = Array.isArray(req.body?.permissionCodes)
       ? req.body.permissionCodes
@@ -2434,7 +2405,6 @@ router.post(
     await assertSystemRoleManageAllowed(req, tenantId, role);
     assertRoleAssignmentUpsertAllowed(role);
     assertBusinessRoleLabelRoleRetired(role);
-    assertWorkflowPackageAssignmentRoleRetired(role);
     await assertScopeTargetExists(tenantId, scopeType, scopeId);
 
     const operation = await withTransaction(async (tx) => {
@@ -2631,7 +2601,6 @@ router.put(
     }
     await assertSystemRoleManageAllowed(req, tenantId, role);
     assertRoleAssignmentUpsertAllowed(role);
-    assertWorkflowPackageAssignmentRoleRetired(role);
     const effectiveDates = resolveAssignmentEffectiveDates(
       req.body,
       assignment,
@@ -2811,9 +2780,6 @@ router.delete(
     const assignment = assignmentResult.rows[0] || null;
     if (assignment) {
       await assertSystemRoleManageAllowed(req, tenantId, assignment);
-      assertWorkflowPackageAssignmentRoleRetired({
-        code: assignment.role_code,
-      });
     }
 
     await withTransaction(async (tx) => {

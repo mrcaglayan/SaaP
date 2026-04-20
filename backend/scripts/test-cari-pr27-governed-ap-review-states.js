@@ -857,8 +857,8 @@ async function main() {
       Number(submissionRequiredReadback.workflowGate?.currentStepNo || 0) === 1 &&
       Number(submissionRequiredReadback.workflowGate?.totalSteps || 0) === 3 &&
       submissionRequiredReadback.workflowGate?.currentActionCode === "SUBMIT" &&
-      submissionRequiredReadback.workflowGate?.currentRequiredPackageCode ===
-        "PKG-AP-DRAFT-SUBMIT" &&
+      submissionRequiredReadback.workflowGate?.currentRequiredPermissionCode ===
+        "cari.doc.submit" &&
       submissionRequiredReadback.workflowGate?.currentStageScopeType === "COUNTRY" &&
       submissionRequiredReadback.workflowGate?.currentStageScopeLabel === "Country" &&
       submissionRequiredReadback.workflowGate?.nextActionCode === "APPROVE" &&
@@ -913,13 +913,14 @@ async function main() {
     Number(submitted.workflowGate?.currentStepNo || 0) === 2 &&
     Number(submitted.workflowGate?.totalSteps || 0) === 3 &&
     submitted.workflowGate?.currentActionCode === "APPROVE" &&
-    submitted.workflowGate?.currentRequiredPackageCode === "PKG-AP-APPROVE" &&
+    submitted.workflowGate?.currentRequiredPermissionCode ===
+      "approvals.requests.approve" &&
     submitted.workflowGate?.currentStageScopeType === "COUNTRY" &&
     submitted.workflowGate?.currentStageScopeLabel === "Country" &&
     submitted.workflowGate?.effectiveApprovalPermissionCode ===
       "approvals.requests.approve" &&
     submitted.workflowGate?.effectiveApprovalPermissionLabel ===
-      "AP approval at Country scope" &&
+      "approvals.requests.approve" &&
     submitted.workflowGate?.nextActorType === "COUNTRY" &&
     submitted.workflowGate?.nextActionCode === "POST" &&
     submitted.workflowGate?.nextActionLabel === "Country posting" &&
@@ -1017,7 +1018,7 @@ async function main() {
       Number(approvedReadback.workflowGate?.currentStepNo || 0) === 3 &&
       Number(approvedReadback.workflowGate?.totalSteps || 0) === 3 &&
       approvedReadback.workflowGate?.currentActionCode === "POST" &&
-      approvedReadback.workflowGate?.currentRequiredPackageCode === "PKG-AP-POST" &&
+      approvedReadback.workflowGate?.currentRequiredPermissionCode === "cari.doc.post" &&
       approvedReadback.workflowGate?.currentStageScopeLabel === "Country" &&
       approvedReadback.workflowGate?.waitingForSummary === "Ready for Country posting" &&
       approvedReadback.workflowGate?.nextActorType === null &&
@@ -1153,8 +1154,8 @@ async function main() {
       Number(returnedWorkflowReadback.workflowGate?.currentStepNo || 0) === 1 &&
       Number(returnedWorkflowReadback.workflowGate?.totalSteps || 0) === 3 &&
       returnedWorkflowReadback.workflowGate?.currentActionCode === "SUBMIT" &&
-      returnedWorkflowReadback.workflowGate?.currentRequiredPackageCode ===
-        "PKG-AP-DRAFT-SUBMIT" &&
+      returnedWorkflowReadback.workflowGate?.currentRequiredPermissionCode ===
+        "cari.doc.submit" &&
       returnedWorkflowReadback.workflowGate?.currentStageScopeLabel === "Country";
   assert(
     returnedWorkflowExplainabilityMatches,

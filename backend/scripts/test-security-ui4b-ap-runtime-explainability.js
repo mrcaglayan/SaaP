@@ -66,7 +66,7 @@ async function main() {
         currentStepNo: 1,
         totalSteps: 2,
         currentActionCode: "APPROVE",
-        currentRequiredPackageCode: "PKG-AP-APPROVE",
+        currentRequiredPermissionCode: "approvals.requests.approve",
         currentStageScopeType: "LEGAL_ENTITY",
         currentStageScopeLabel: "Legal Entity",
         effectiveApprovalPermissionCode: "approvals.requests.approve",
@@ -86,7 +86,7 @@ async function main() {
         "Legal Entity"
       ) &&
       findItemValue(pendingDetailModel?.noteItems, "Current gate") ===
-        "Waiting for approval with AP Documents / Approve at Legal Entity scope." &&
+        "Waiting for approval with Approve AP at Legal Entity scope." &&
       findItemValue(pendingDetailModel?.technicalItems, "Routing match type") ===
         "Amount band",
     "AP detail explainability should surface the AMX06 route facts and in-scope approval gate"
@@ -107,7 +107,7 @@ async function main() {
         currentStepNo: 1,
         totalSteps: 3,
         currentActionCode: "DRAFT",
-        currentRequiredPackageCode: "PKG-AP-DRAFT-SUBMIT",
+        currentRequiredPermissionCode: "cari.doc.update",
         currentStageScopeType: "LEGAL_ENTITY",
         currentStageScopeLabel: "Legal Entity",
         waitingForSummary: "Draft is in progress at Legal Entity scope",
@@ -125,9 +125,9 @@ async function main() {
   assert(
     draftActionModel?.headline === "Draft is in progress at Legal Entity scope" &&
       findItemValue(draftActionModel?.noteItems, "Current gate") ===
-        "Draft work stays with AP Documents / Draft & Submit at Legal Entity scope." &&
+        "Draft work stays with Draft and submit AP at Legal Entity scope." &&
       draftActionModel?.eligibleActorSummary ===
-        "Users assigned AP Documents / Draft & Submit at Legal Entity scope can create or edit the current draft." &&
+        "Users assigned Draft and submit AP at Legal Entity scope can create or edit the current draft." &&
       draftActionModel?.userCapabilityLines?.includes(
         "You cannot post because the document is still in its draft step."
       ),
@@ -157,7 +157,7 @@ async function main() {
         routingUsedFallback: true,
         routingMatchType: "FALLBACK",
         currentActionCode: "POST",
-        currentRequiredPackageCode: "PKG-AP-POST",
+        currentRequiredPermissionCode: "cari.doc.post",
         currentStageScopeType: "LEGAL_ENTITY",
         currentStageScopeLabel: "Legal Entity",
         waitingForSummary: "Ready for Legal Entity posting",
@@ -178,14 +178,14 @@ async function main() {
       findItemValue(approvedActionModel?.factItems, "Matched rule") ===
         "Legal Entity fallback route" &&
       findItemValue(approvedActionModel?.noteItems, "Current gate") ===
-        "Waiting for posting with AP Documents / Post at Legal Entity scope." &&
+        "Waiting for posting with Post AP at Legal Entity scope." &&
       findItemValue(approvedActionModel?.noteItems, "Fallback route used") ===
         "No amount band matched in the selected scope, so the fallback route was used." &&
       approvedActionModel?.userCapabilityLines?.includes(
         "You can view this document but cannot post it."
       ) &&
       approvedActionModel?.userCapabilityLines?.includes(
-        "Posting requires AP Documents / Post at Legal Entity scope."
+        "Posting requires Post AP at Legal Entity scope."
       ),
     "AP action explainability should explain fallback-post routing and why a read-only user cannot post"
   );

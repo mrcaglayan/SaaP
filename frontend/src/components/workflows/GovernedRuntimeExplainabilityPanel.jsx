@@ -106,9 +106,9 @@ export default function GovernedRuntimeExplainabilityPanel({
       sectionClass
     ),
     renderSummaryTile(
-      "required-package",
-      l("Required package", "Gerekli paket"),
-      model.requiredPackageLabel,
+      "required-authority",
+      l("Required authority", "Gerekli yetki"),
+      model.requiredAuthorityLabel,
       sectionClass
     ),
     renderSummaryTile(
