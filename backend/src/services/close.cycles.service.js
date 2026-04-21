@@ -94,6 +94,19 @@ function resolveActorRunQuery(actorCtx = {}) {
   return typeof actorCtx?.runQuery === "function" ? actorCtx.runQuery : query;
 }
 
+function normalizeOptionalDateTime(value, label) {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    throw badRequest(`${label} must be a valid datetime`);
+  }
+
+  return parsed.toISOString().slice(0, 19).replace("T", " ");
+}
+
 const CLOSE_PROVISION_RETRYABLE_ERRNOS = new Set([
   1205, // ER_LOCK_WAIT_TIMEOUT
   1213, // ER_LOCK_DEADLOCK
@@ -1910,6 +1923,8 @@ export async function createCycle(input, actorCtx = {}) {
   const legalEntityId = parsePositiveInt(input?.legalEntityId);
   const consolidationGroupId = parsePositiveInt(input?.consolidationGroupId);
   const ownerUserId = parsePositiveInt(input?.ownerUserId);
+  const startsAt = normalizeOptionalDateTime(input?.startsAt, "startsAt");
+  const dueAt = normalizeOptionalDateTime(input?.dueAt, "dueAt");
   const hasLegalEntityScope = Boolean(legalEntityId);
   const hasConsolidationGroupScope = Boolean(consolidationGroupId);
   if (!fiscalPeriodId) {
@@ -1989,8 +2004,8 @@ export async function createCycle(input, actorCtx = {}) {
         consolidationGroupId || null,
         groupCompanyId,
         scopeKey,
-        input?.startsAt || null,
-        input?.dueAt || null,
+        startsAt,
+        dueAt,
         ownerUserId || null,
         userId,
         userId,
