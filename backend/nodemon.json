@@ -1,0 +1,6 @@
+{
+  "watch": ["src", "../shared"],
+  "ext": "js,json",
+  "ignore": ["node_modules", "storage", "outbox"],
+  "exec": "node src/index.js"
+}

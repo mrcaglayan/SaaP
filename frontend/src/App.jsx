@@ -1,5 +1,5 @@
-import { Suspense, lazy } from "react";
-import { Routes, Route, Navigate, useLocation } from "react-router-dom";
+import { Suspense, lazy, useEffect } from "react";
+import { Routes, Route, Navigate, matchPath, useLocation } from "react-router-dom";
 import LoginPage from "./pages/LoginPage";
 import AcceptInvitePage from "./pages/AcceptInvitePage.jsx";
 import ForgotPasswordPage from "./pages/ForgotPasswordPage.jsx";
@@ -105,6 +105,7 @@ import RequireTenantReadiness from "./readiness/RequireTenantReadiness.jsx";
 import ModuleReadinessProvider from "./readiness/ModuleReadinessProvider.jsx";
 import LegalEntityActivationProvider from "./readiness/LegalEntityActivationProvider.jsx";
 import RequireProviderAuth from "./provider/RequireProviderAuth.jsx";
+import { useI18n } from "./i18n/useI18n.js";
 
 const ConsolidationReportsPage = lazy(
   () => import("./pages/ConsolidationReportsPage.jsx"),
@@ -183,6 +184,83 @@ const routeLoadingFallback = (
     <div className="text-sm text-slate-600">Loading module...</div>
   </div>
 );
+const DEFAULT_BROWSER_TITLE = "my-app";
+const ROUTE_KEY_EMPTY_FALLBACK = "";
+const STATIC_BROWSER_TITLE_CONFIG = Object.freeze({
+  "/login": Object.freeze({
+    messageKey: Object.freeze(["login", "title"]),
+    fallback: "Login",
+  }),
+  "/accept-invite": Object.freeze({
+    messageKey: Object.freeze(["inviteAccept", "title"]),
+    fallback: "Complete Invitation",
+  }),
+  "/forgot-password": Object.freeze({
+    messageKey: Object.freeze(["passwordResetRequest", "title"]),
+    fallback: "Password Reset",
+  }),
+  "/reset-password": Object.freeze({
+    messageKey: Object.freeze(["passwordResetComplete", "title"]),
+    fallback: "Set New Password",
+  }),
+  "/provider/login": Object.freeze({
+    messageKey: Object.freeze(["providerLogin", "title"]),
+    fallback: "Provider Admin Login",
+  }),
+  "/provider/bootstrap": Object.freeze({
+    messageKey: Object.freeze(["providerBootstrap", "title"]),
+    fallback: "Provider Tenant Admin Panel",
+  }),
+  "/provider/admin/tenants": Object.freeze({
+    messageKey: Object.freeze(["providerBootstrap", "title"]),
+    fallback: "Provider Tenant Admin Panel",
+  }),
+});
+const DYNAMIC_BROWSER_TITLE_CONFIG = Object.freeze([
+  Object.freeze({
+    pattern: "/app/odeme-batchleri/:batchId",
+    messageKey: Object.freeze(["sidebar", "byPath", "/app/odeme-batchleri"]),
+    fallback: "Payment Batches",
+  }),
+  Object.freeze({
+    pattern: "/app/payroll-runs/:runId",
+    messageKey: Object.freeze(["sidebar", "byPath", "/app/payroll-runs"]),
+    fallback: "Payroll Runs",
+  }),
+  Object.freeze({
+    pattern: "/app/payroll-runs/:runId/liabilities",
+    messageKey: Object.freeze(["sidebar", "byPath", "/app/payroll-liabilities"]),
+    fallback: "Payroll Liabilities",
+  }),
+  Object.freeze({
+    pattern: "/app/stok-maliyet-voucherleri/:voucherId",
+    messageKey: Object.freeze([
+      "sidebar",
+      "byPath",
+      "/app/stok-maliyet-voucherleri",
+    ]),
+    fallback: "Stock Landed Cost Vouchers",
+  }),
+  Object.freeze({
+    pattern: "/app/demirbas-karti-detayi/:assetId",
+    titleEn: "Fixed Asset Detail",
+    titleTr: "Demirbas Detayi",
+  }),
+  Object.freeze({
+    pattern: "/app/ayarlar/security-admin/catalog/roles/:roleId",
+    titleEn: "Role Detail",
+    titleTr: "Rol Detayi",
+  }),
+  Object.freeze({
+    pattern: "/app/donem-sonu-islemler/yillik/yerel-kapanis-paketleri/:packId",
+    messageKey: Object.freeze([
+      "sidebar",
+      "byPath",
+      "/app/donem-sonu-islemler/yillik/yerel-kapanis-paketleri",
+    ]),
+    fallback: "Local Close Packs",
+  }),
+]);
 
 function buildMergedNavigationTarget(to, currentSearch = "", currentHash = "") {
   const targetUrl = new URL(String(to || ""), "https://example.invalid");
@@ -196,6 +274,45 @@ function buildMergedNavigationTarget(to, currentSearch = "", currentHash = "") {
   const nextSearch = nextSearchParams.toString();
   const nextHash = targetUrl.hash || String(currentHash || "");
   return `${targetUrl.pathname}${nextSearch ? `?${nextSearch}` : ""}${nextHash}`;
+}
+
+function countSearchParameters(target) {
+  const targetUrl = new URL(String(target || ""), "https://example.invalid");
+  return Array.from(targetUrl.searchParams.keys()).length;
+}
+
+function matchesRouteSearch(target, currentSearch = "") {
+  const targetUrl = new URL(String(target || ""), "https://example.invalid");
+  const targetParams = targetUrl.searchParams;
+  if (Array.from(targetParams.keys()).length === 0) {
+    return true;
+  }
+
+  const currentParams = new URLSearchParams(String(currentSearch || ""));
+  for (const [key, value] of targetParams.entries()) {
+    if (currentParams.get(key) !== value) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function sortTitleRouteCandidates(left, right) {
+  const leftSearchCount = countSearchParameters(left?.to);
+  const rightSearchCount = countSearchParameters(right?.to);
+  if (leftSearchCount !== rightSearchCount) {
+    return rightSearchCount - leftSearchCount;
+  }
+
+  return String(right?.routePath || "").length - String(left?.routePath || "").length;
+}
+
+function resolveConfiguredBrowserTitle(config, t, l) {
+  if (Array.isArray(config?.messageKey)) {
+    return t(config.messageKey, config.fallback || ROUTE_KEY_EMPTY_FALLBACK);
+  }
+  return l(config?.titleEn, config?.titleTr);
 }
 
 function renderSecurityAdminSurface(surfaceKey) {
@@ -856,6 +973,89 @@ const implementedRoutes = [
   },
 ];
 
+const browserTitleRouteEntries = rawSidebarLinks.map((link) => ({
+  ...link,
+  routePath: toRoutePath(link?.to),
+}));
+const knownBrowserTitleTargets = new Set(
+  browserTitleRouteEntries.map((entry) => String(entry?.to || "").trim()),
+);
+
+for (const route of implementedRoutes) {
+  const routeTarget = String(route?.appPath || "").trim();
+  if (!routeTarget || knownBrowserTitleTargets.has(routeTarget)) {
+    continue;
+  }
+
+  const sourcePath = route.permissionPath || route.appPath;
+  const sourceEntry =
+    browserTitleRouteEntries.find((entry) => entry.to === sourcePath) ||
+    browserTitleRouteEntries.find(
+      (entry) => entry.routePath === toRoutePath(sourcePath),
+    );
+  if (!sourceEntry) {
+    continue;
+  }
+
+  browserTitleRouteEntries.push({
+    ...sourceEntry,
+    to: routeTarget,
+    routePath: toRoutePath(routeTarget),
+  });
+  knownBrowserTitleTargets.add(routeTarget);
+}
+
+function resolveBrowserPageTitle(pathname, search, t, l) {
+  const normalizedPath = String(pathname || "").trim() || "/";
+  const normalizedSearch = String(search || "");
+  const exactRouteKey = `${normalizedPath}${normalizedSearch}`;
+  const exactRouteTitle = t(
+    ["sidebar", "byPath", exactRouteKey],
+    ROUTE_KEY_EMPTY_FALLBACK,
+  );
+  if (exactRouteTitle) {
+    return exactRouteTitle;
+  }
+
+  const staticTitleConfig = STATIC_BROWSER_TITLE_CONFIG[normalizedPath];
+  if (staticTitleConfig) {
+    return resolveConfiguredBrowserTitle(staticTitleConfig, t, l);
+  }
+
+  const exactPathTitle = t(
+    ["sidebar", "byPath", normalizedPath],
+    ROUTE_KEY_EMPTY_FALLBACK,
+  );
+  if (exactPathTitle) {
+    return exactPathTitle;
+  }
+
+  const routeTitleEntry = browserTitleRouteEntries
+    .filter(
+      (entry) =>
+        entry.routePath === normalizedPath &&
+        matchesRouteSearch(entry.to, normalizedSearch),
+    )
+    .sort(sortTitleRouteCandidates)[0];
+  if (routeTitleEntry) {
+    const fallbackTitle = String(
+      routeTitleEntry.label || routeTitleEntry.title || "",
+    ).trim();
+    return t(["sidebar", "byPath", routeTitleEntry.to], fallbackTitle);
+  }
+
+  const dynamicTitleConfig = DYNAMIC_BROWSER_TITLE_CONFIG.find((entry) =>
+    matchPath({ path: entry.pattern, end: true }, normalizedPath),
+  );
+  if (dynamicTitleConfig) {
+    return resolveConfiguredBrowserTitle(dynamicTitleConfig, t, l);
+  }
+
+  return normalizedPath === "/"
+    ? DEFAULT_BROWSER_TITLE
+    : t(["notFound", "title"], "Page not found");
+}
+
 for (const route of implementedRoutes) {
   const permissionPath = route.permissionPath || route.appPath;
   if (permissionPath === route.appPath) {
@@ -1046,7 +1246,9 @@ function SecurityAdminWorkbenchAdapter({ routeKey }) {
  * Track 51 report surfaces on lazy-loaded route chunks.
  */
 export default function App() {
+  const location = useLocation();
   const { hasAllPermissions, hasAnyFeature } = useAuth();
+  const { l, t } = useI18n();
   const canViewUnimplementedModules = hasAllPermissions(
     MODULE_PREVIEW_ADMIN_PERMISSIONS,
   );
@@ -1061,6 +1263,15 @@ export default function App() {
   const placeholderRoutes = canViewUnimplementedModules
     ? allPlaceholderRoutes
     : [];
+
+  useEffect(() => {
+    document.title = resolveBrowserPageTitle(
+      location.pathname,
+      location.search,
+      t,
+      l,
+    );
+  }, [l, location.pathname, location.search, t]);
 
   return (
     <Routes>

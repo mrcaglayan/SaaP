@@ -2,6 +2,16 @@ function freezeScopeTypes(scopeTypes) {
   return Object.freeze([...scopeTypes]);
 }
 
+// Consolidation workflow approvals can legitimately follow different review
+// ladders across org models, including COUNTRY -> GROUP, so the shared policy
+// must allow COUNTRY wherever consolidation run governance is bound to a step.
+const CONSOLIDATION_WORKFLOW_SCOPE_TYPES = freezeScopeTypes([
+  "OPERATING_UNIT",
+  "LEGAL_ENTITY",
+  "COUNTRY",
+  "GROUP",
+]);
+
 export const WORKFLOW_STEP_ALLOWED_SCOPE_TYPES_BY_PERMISSION = Object.freeze({
   "ouclose.prepare": freezeScopeTypes(["LEGAL_ENTITY"]),
   "ouclose.review": freezeScopeTypes(["LEGAL_ENTITY", "COUNTRY"]),
@@ -10,31 +20,11 @@ export const WORKFLOW_STEP_ALLOWED_SCOPE_TYPES_BY_PERMISSION = Object.freeze({
   "ouclose.reopen": freezeScopeTypes(["COUNTRY", "GROUP"]),
   "ouclose.admin": freezeScopeTypes(["COUNTRY", "GROUP"]),
   "ouclose.override_post_lock": freezeScopeTypes(["COUNTRY", "GROUP"]),
-  "consolidation.run.create": freezeScopeTypes([
-    "OPERATING_UNIT",
-    "LEGAL_ENTITY",
-    "GROUP",
-  ]),
-  "consolidation.run.execute": freezeScopeTypes([
-    "OPERATING_UNIT",
-    "LEGAL_ENTITY",
-    "GROUP",
-  ]),
-  "consolidation.adjustment.post": freezeScopeTypes([
-    "OPERATING_UNIT",
-    "LEGAL_ENTITY",
-    "GROUP",
-  ]),
-  "consolidation.elimination.post": freezeScopeTypes([
-    "OPERATING_UNIT",
-    "LEGAL_ENTITY",
-    "GROUP",
-  ]),
-  "consolidation.run.finalize": freezeScopeTypes([
-    "OPERATING_UNIT",
-    "LEGAL_ENTITY",
-    "GROUP",
-  ]),
+  "consolidation.run.create": CONSOLIDATION_WORKFLOW_SCOPE_TYPES,
+  "consolidation.run.execute": CONSOLIDATION_WORKFLOW_SCOPE_TYPES,
+  "consolidation.adjustment.post": CONSOLIDATION_WORKFLOW_SCOPE_TYPES,
+  "consolidation.elimination.post": CONSOLIDATION_WORKFLOW_SCOPE_TYPES,
+  "consolidation.run.finalize": CONSOLIDATION_WORKFLOW_SCOPE_TYPES,
 });
 
 function normalizeWorkflowStepPermissionCode(permissionCode) {
