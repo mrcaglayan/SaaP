@@ -167,6 +167,15 @@ const PERMISSIONS = [
   ],
   ["close.cycle.lock", "Lock close cycles once all required terminal dependencies are resolved"],
   ["close.cockpit.read", "Read the close cockpit, worklist, blockers, and readiness views"],
+  ["close.task.read", "Read close checklist tasks"],
+  ["close.task.template.read", "Read close checklist task templates"],
+  ["close.task.template.write", "Create/update close checklist task templates"],
+  ["close.task.create", "Create manual close checklist tasks"],
+  ["close.task.assign", "Assign close checklist task owners and reviewers"],
+  ["close.task.work", "Start and submit owned close checklist tasks"],
+  ["close.task.review", "Return or approve submitted close checklist tasks"],
+  ["close.task.waive", "Waive close checklist tasks with governance reason"],
+  ["close.task.admin", "Administer close checklist task lifecycle and overrides"],
   ["cash.register.read", "Read cash registers"],
   ["cash.register.upsert", "Create/update cash registers"],
   ["cash.session.open", "Open cash sessions"],
@@ -976,6 +985,51 @@ const LOCAL_CLOSE_REOPEN_ADMIN_AUTHORITY_PERMISSION_CODES = buildPermissionList(
   ],
 });
 
+const CLOSE_TASK_VIEWER_PERMISSION_CODES = buildPermissionList({
+  permissionGroups: ["close.task.viewer"],
+  permissions: [
+    ...ROLE_SCOPE_CONTEXT_PERMISSION_CODES,
+    "close.cycle.read",
+    "close.cockpit.read",
+  ],
+});
+
+const CLOSE_TASK_PREPARER_PERMISSION_CODES = buildPermissionList({
+  permissionGroups: ["close.task.preparer"],
+  permissions: [
+    ...ROLE_SCOPE_CONTEXT_PERMISSION_CODES,
+    "close.cycle.read",
+    "close.cockpit.read",
+  ],
+});
+
+const CLOSE_TASK_REVIEWER_PERMISSION_CODES = buildPermissionList({
+  permissionGroups: ["close.task.reviewer"],
+  permissions: [
+    ...ROLE_SCOPE_CONTEXT_PERMISSION_CODES,
+    "close.cycle.read",
+    "close.cockpit.read",
+  ],
+});
+
+const CLOSE_TASK_WAIVER_AUTHORITY_PERMISSION_CODES = buildPermissionList({
+  permissionGroups: ["close.task.waiver"],
+  permissions: [
+    ...ROLE_SCOPE_CONTEXT_PERMISSION_CODES,
+    "close.cycle.read",
+    "close.cockpit.read",
+  ],
+});
+
+const CLOSE_TASK_ADMIN_PERMISSION_CODES = buildPermissionList({
+  permissionGroups: ["close.task.admin"],
+  permissions: [
+    ...ROLE_SCOPE_CONTEXT_PERMISSION_CODES,
+    "close.cycle.read",
+    "close.cockpit.read",
+  ],
+});
+
 const PERIOD_CLOSE_SUPERVISOR_AUTHORITY_PERMISSION_CODES = buildPermissionList({
   permissions: [
     "gl.book.read",
@@ -1262,6 +1316,11 @@ export const ROLE_CAPABILITY_GROUPS = Object.freeze({
   LocalCloseReviewer: Object.freeze(["close.reviewer"]),
   LocalCloseApproveLockAuthority: Object.freeze([]),
   LocalCloseReopenAdminAuthority: Object.freeze([]),
+  CloseTaskViewer: Object.freeze(["close.task.viewer"]),
+  CloseTaskPreparer: Object.freeze(["close.task.preparer"]),
+  CloseTaskReviewer: Object.freeze(["close.task.reviewer"]),
+  CloseTaskWaiverAuthority: Object.freeze(["close.task.waiver"]),
+  CloseTaskAdmin: Object.freeze(["close.task.admin"]),
   PeriodCloseSupervisorAuthority: Object.freeze([]),
   PeriodCloseAuthority: Object.freeze([]),
   PeriodReopenAuthority: Object.freeze([]),
@@ -1462,6 +1521,31 @@ const ALL_ROLE_DEFINITIONS = attachRoleMetadata([
     code: "LocalCloseReopenAdminAuthority",
     name: "Local Close Reopen / Admin Authority",
     permissions: LOCAL_CLOSE_REOPEN_ADMIN_AUTHORITY_PERMISSION_CODES,
+  },
+  {
+    code: "CloseTaskViewer",
+    name: "Close Task Viewer",
+    permissions: CLOSE_TASK_VIEWER_PERMISSION_CODES,
+  },
+  {
+    code: "CloseTaskPreparer",
+    name: "Close Task Preparer",
+    permissions: CLOSE_TASK_PREPARER_PERMISSION_CODES,
+  },
+  {
+    code: "CloseTaskReviewer",
+    name: "Close Task Reviewer",
+    permissions: CLOSE_TASK_REVIEWER_PERMISSION_CODES,
+  },
+  {
+    code: "CloseTaskWaiverAuthority",
+    name: "Close Task Waiver Authority",
+    permissions: CLOSE_TASK_WAIVER_AUTHORITY_PERMISSION_CODES,
+  },
+  {
+    code: "CloseTaskAdmin",
+    name: "Close Task Admin",
+    permissions: CLOSE_TASK_ADMIN_PERMISSION_CODES,
   },
   {
     code: "PeriodCloseSupervisorAuthority",

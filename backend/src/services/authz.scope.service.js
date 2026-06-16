@@ -18,6 +18,24 @@ export const VALID_AUTHZ_SCOPE_TYPES = new Set([
   "LEGAL_ENTITY",
   "OPERATING_UNIT",
 ]);
+export const CLOSE_TASK_PERMISSION_CODES = Object.freeze({
+  read: "close.task.read",
+  templateRead: "close.task.template.read",
+  templateWrite: "close.task.template.write",
+  create: "close.task.create",
+  assign: "close.task.assign",
+  work: "close.task.work",
+  review: "close.task.review",
+  waive: "close.task.waive",
+  admin: "close.task.admin",
+});
+export const CLOSE_TASK_RBAC_SCOPE_TYPES = Object.freeze([
+  "OPERATING_UNIT",
+  "LEGAL_ENTITY",
+  "COUNTRY",
+  "GROUP",
+]);
+const CLOSE_TASK_RBAC_SCOPE_TYPE_SET = new Set(CLOSE_TASK_RBAC_SCOPE_TYPES);
 const SCOPE_KIND_TO_KEY = {
   group: "groups",
   country: "countries",
@@ -1487,6 +1505,257 @@ export async function checkUserHasAnyPermissionAtScope(
     }
   }
   return false;
+}
+
+/**
+ * Normalize the RBAC scope stored on a close task. Task scopes intentionally
+ * exclude tenant scope so country/group visibility cannot become a new close
+ * cycle identity.
+ */
+export function normalizeCloseTaskRbacScope(scope, tenantId) {
+  const normalizedScope = normalizeAuthzScope(scope, tenantId);
+  if (!normalizedScope) {
+    return null;
+  }
+  if (!CLOSE_TASK_RBAC_SCOPE_TYPE_SET.has(normalizedScope.scopeType)) {
+    throw badRequest(
+      `Close task RBAC scopeType must be one of ${CLOSE_TASK_RBAC_SCOPE_TYPES.join(", ")}`
+    );
+  }
+  return normalizedScope;
+}
+
+function readObjectField(source, camelName, snakeName) {
+  if (!source || typeof source !== "object") {
+    return null;
+  }
+  return source[camelName] ?? source[snakeName] ?? null;
+}
+
+/**
+ * Resolve the stored RBAC scope from a close task row or DTO.
+ */
+export function resolveCloseTaskRbacScope(task, tenantId) {
+  return normalizeCloseTaskRbacScope(
+    {
+      scopeType: readObjectField(task, "rbacScopeType", "rbac_scope_type"),
+      scopeId: readObjectField(task, "rbacScopeId", "rbac_scope_id"),
+    },
+    tenantId
+  );
+}
+
+/**
+ * Check a preloaded RBAC scope context against one close-task RBAC scope.
+ */
+export function isCloseTaskScopeAllowed(scopeContext, scopeType, scopeId, tenantId) {
+  return isScopeAllowed(
+    scopeContext,
+    normalizeCloseTaskRbacScope({ scopeType, scopeId }, tenantId)
+  );
+}
+
+/**
+ * Check whether a user can read close checklist tasks at one RBAC scope.
+ */
+export async function checkUserCanReadCloseTaskAtScope(
+  userId,
+  tenantId,
+  scopeType,
+  scopeId,
+  runQueryOrOptions = query
+) {
+  const taskScope = normalizeCloseTaskRbacScope({ scopeType, scopeId }, tenantId);
+  return checkUserHasPermissionAtScope(
+    userId,
+    tenantId,
+    CLOSE_TASK_PERMISSION_CODES.read,
+    taskScope.scopeType,
+    taskScope.scopeId,
+    runQueryOrOptions
+  );
+}
+
+/**
+ * Check whether a user can create manual close checklist tasks at one RBAC scope.
+ */
+export async function checkUserCanCreateCloseTaskAtScope(
+  userId,
+  tenantId,
+  scopeType,
+  scopeId,
+  runQueryOrOptions = query
+) {
+  const taskScope = normalizeCloseTaskRbacScope({ scopeType, scopeId }, tenantId);
+  return checkUserHasPermissionAtScope(
+    userId,
+    tenantId,
+    CLOSE_TASK_PERMISSION_CODES.create,
+    taskScope.scopeType,
+    taskScope.scopeId,
+    runQueryOrOptions
+  );
+}
+
+/**
+ * Check whether a user can assign close checklist task owners/reviewers at one
+ * RBAC scope.
+ */
+export async function checkUserCanAssignCloseTaskAtScope(
+  userId,
+  tenantId,
+  scopeType,
+  scopeId,
+  runQueryOrOptions = query
+) {
+  const taskScope = normalizeCloseTaskRbacScope({ scopeType, scopeId }, tenantId);
+  return checkUserHasPermissionAtScope(
+    userId,
+    tenantId,
+    CLOSE_TASK_PERMISSION_CODES.assign,
+    taskScope.scopeType,
+    taskScope.scopeId,
+    runQueryOrOptions
+  );
+}
+
+/**
+ * Check whether a user can administer close checklist task overrides at one
+ * RBAC scope.
+ */
+export async function checkUserCanAdministerCloseTaskAtScope(
+  userId,
+  tenantId,
+  scopeType,
+  scopeId,
+  runQueryOrOptions = query
+) {
+  const taskScope = normalizeCloseTaskRbacScope({ scopeType, scopeId }, tenantId);
+  return checkUserHasPermissionAtScope(
+    userId,
+    tenantId,
+    CLOSE_TASK_PERMISSION_CODES.admin,
+    taskScope.scopeType,
+    taskScope.scopeId,
+    runQueryOrOptions
+  );
+}
+
+/**
+ * Check whether a user can work an owned close checklist task. Admin authority
+ * bypasses owner matching for controlled overrides.
+ */
+export async function checkUserCanWorkCloseTask(
+  userId,
+  tenantId,
+  task,
+  runQueryOrOptions = query
+) {
+  const taskScope = resolveCloseTaskRbacScope(task, tenantId);
+  if (
+    await checkUserCanAdministerCloseTaskAtScope(
+      userId,
+      tenantId,
+      taskScope.scopeType,
+      taskScope.scopeId,
+      runQueryOrOptions
+    )
+  ) {
+    return true;
+  }
+  if (
+    parsePositiveInt(userId) !==
+    parsePositiveInt(readObjectField(task, "ownerUserId", "owner_user_id"))
+  ) {
+    return false;
+  }
+  return checkUserHasPermissionAtScope(
+    userId,
+    tenantId,
+    CLOSE_TASK_PERMISSION_CODES.work,
+    taskScope.scopeType,
+    taskScope.scopeId,
+    runQueryOrOptions
+  );
+}
+
+/**
+ * Check whether a user can review a submitted close checklist task. Admin
+ * authority bypasses reviewer matching for controlled overrides.
+ */
+export async function checkUserCanReviewCloseTask(
+  userId,
+  tenantId,
+  task,
+  runQueryOrOptions = query
+) {
+  const taskScope = resolveCloseTaskRbacScope(task, tenantId);
+  if (
+    await checkUserCanAdministerCloseTaskAtScope(
+      userId,
+      tenantId,
+      taskScope.scopeType,
+      taskScope.scopeId,
+      runQueryOrOptions
+    )
+  ) {
+    return true;
+  }
+  if (
+    parsePositiveInt(userId) !==
+    parsePositiveInt(readObjectField(task, "reviewerUserId", "reviewer_user_id"))
+  ) {
+    return false;
+  }
+  return checkUserHasPermissionAtScope(
+    userId,
+    tenantId,
+    CLOSE_TASK_PERMISSION_CODES.review,
+    taskScope.scopeType,
+    taskScope.scopeId,
+    runQueryOrOptions
+  );
+}
+
+/**
+ * Check whether a user can waive a close checklist task at the task RBAC scope.
+ */
+export async function checkUserCanWaiveCloseTask(
+  userId,
+  tenantId,
+  task,
+  runQueryOrOptions = query
+) {
+  const taskScope = resolveCloseTaskRbacScope(task, tenantId);
+  return checkUserHasPermissionAtScope(
+    userId,
+    tenantId,
+    CLOSE_TASK_PERMISSION_CODES.waive,
+    taskScope.scopeType,
+    taskScope.scopeId,
+    runQueryOrOptions
+  );
+}
+
+/**
+ * Check tenant-level close task template write authority.
+ */
+export async function checkUserCanWriteCloseTaskTemplates(
+  userId,
+  tenantId,
+  runQueryOrOptions = query
+) {
+  return checkUserHasAnyPermissionAtScope(
+    userId,
+    tenantId,
+    [
+      CLOSE_TASK_PERMISSION_CODES.templateWrite,
+      CLOSE_TASK_PERMISSION_CODES.admin,
+    ],
+    "TENANT",
+    tenantId,
+    runQueryOrOptions
+  );
 }
 
 /**

@@ -72,6 +72,28 @@ export const SOD_RULES = Object.freeze([
     reason: "Maker-checker: reopen requesters should not review the same local close request.",
   }),
   Object.freeze({
+    code: "close-task.work-review.same-record",
+    recordType: "CLOSE_TASK_INSTANCE",
+    action_a: "close.task.work",
+    action_b: "close.task.review",
+    actorUserField: "ownerUserId",
+    scope: "per-record",
+    enforcement: "warn",
+    reason:
+      "Maker-checker: close task owners should not review their own task; admin override remains a warning, not a hard assignment error.",
+  }),
+  Object.freeze({
+    code: "close-task.work-waive.same-record",
+    recordType: "CLOSE_TASK_INSTANCE",
+    action_a: "close.task.work",
+    action_b: "close.task.waive",
+    actorUserField: "ownerUserId",
+    scope: "per-record",
+    enforcement: "warn",
+    reason:
+      "Maker-checker: close task owners should not waive their own task; admin override remains a warning, not a hard assignment error.",
+  }),
+  Object.freeze({
     code: "inventory.transfer.initiate-approve.same-record",
     recordType: "INVENTORY_TRANSFER",
     action_a: "inventory.transfer.create",

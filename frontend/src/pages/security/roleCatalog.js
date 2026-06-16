@@ -39,6 +39,7 @@ const WORKFLOW_FAMILY_LABELS = Object.freeze({
   CROSS_WORKFLOW: "Cross-workflow",
   AP_DOCUMENT_POSTING: "AP Document Posting",
   LOCAL_CLOSE_PACK: "Local Close Pack",
+  CLOSE_CHECKLIST_TASK: "Close Checklist Task",
   PERIOD_CLOSE: "Period Close",
   CONSOLIDATION_RUN: "Consolidation Run",
 });
@@ -517,6 +518,56 @@ const ROLE_CATALOG = Object.freeze({
     recommendedScopes: ["COUNTRY", "GROUP"],
     workflowFamily: "LOCAL_CLOSE_PACK",
     sortOrder: 332,
+  },
+  CloseTaskViewer: {
+    code: "Close Task Viewer",
+    category: "composable",
+    summary:
+      "Reads close checklist tasks and templates without preparation, review, waiver, or administration authority.",
+    capabilities: ["Task visibility", "Template visibility", "Close task audit"],
+    recommendedScopes: ["OPERATING_UNIT", "LEGAL_ENTITY", "COUNTRY", "GROUP"],
+    workflowFamily: "CLOSE_CHECKLIST_TASK",
+    sortOrder: 333,
+  },
+  CloseTaskPreparer: {
+    code: "Close Task Preparer",
+    category: "composable",
+    summary:
+      "Creates and works assigned close checklist tasks without review or waiver authority.",
+    capabilities: ["Task creation", "Task preparation", "Evidence handoff"],
+    recommendedScopes: ["OPERATING_UNIT", "LEGAL_ENTITY", "COUNTRY"],
+    workflowFamily: "CLOSE_CHECKLIST_TASK",
+    sortOrder: 334,
+  },
+  CloseTaskReviewer: {
+    code: "Close Task Reviewer",
+    category: "composable",
+    summary:
+      "Reviews submitted close checklist tasks without becoming the preparer or waiver authority.",
+    capabilities: ["Task review", "Return decisions", "Approval decisions"],
+    recommendedScopes: ["LEGAL_ENTITY", "COUNTRY", "GROUP"],
+    workflowFamily: "CLOSE_CHECKLIST_TASK",
+    sortOrder: 335,
+  },
+  CloseTaskWaiverAuthority: {
+    code: "Close Task Waiver Authority",
+    category: "composable",
+    summary:
+      "Waives close checklist tasks with mandatory governance reason while staying separate from preparation.",
+    capabilities: ["Task waiver", "Exception signoff", "Governance reason"],
+    recommendedScopes: ["COUNTRY", "GROUP"],
+    workflowFamily: "CLOSE_CHECKLIST_TASK",
+    sortOrder: 336,
+  },
+  CloseTaskAdmin: {
+    code: "Close Task Admin",
+    category: "composable",
+    summary:
+      "Administers close checklist task assignment, lifecycle overrides, and tenant-level template governance.",
+    capabilities: ["Task assignment", "Lifecycle override", "Template governance"],
+    recommendedScopes: ["TENANT", "GROUP", "COUNTRY"],
+    workflowFamily: "CLOSE_CHECKLIST_TASK",
+    sortOrder: 337,
   },
   PeriodCloseSupervisorAuthority: {
     code: "Period Close Supervisor",

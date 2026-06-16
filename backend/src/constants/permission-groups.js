@@ -147,6 +147,40 @@ export const PERMISSION_GROUPS = {
       "ouclose.admin",
     ],
   },
+  "close.task.viewer": {
+    permissions: [
+      "close.task.read",
+      "close.task.template.read",
+    ],
+  },
+  "close.task.preparer": {
+    includes: ["close.task.viewer"],
+    permissions: [
+      "close.task.create",
+      "close.task.work",
+    ],
+  },
+  "close.task.reviewer": {
+    includes: ["close.task.viewer"],
+    permissions: [
+      "close.task.review",
+    ],
+  },
+  "close.task.waiver": {
+    includes: ["close.task.reviewer"],
+    permissions: [
+      "close.task.waive",
+    ],
+  },
+  "close.task.admin": {
+    includes: ["close.task.viewer"],
+    permissions: [
+      "close.task.template.write",
+      "close.task.create",
+      "close.task.assign",
+      "close.task.admin",
+    ],
+  },
   "payroll.readonly": {
     permissions: [
       "payroll.runs.read",

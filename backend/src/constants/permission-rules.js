@@ -29,6 +29,13 @@ export const PERMISSION_DEPENDENCIES = Object.freeze({
   ]),
   "ouclose.approve": Object.freeze(["ouclose.read"]),
   "ouclose.lock": Object.freeze(["ouclose.read", "ouclose.approve"]),
+  "close.task.template.write": Object.freeze(["close.task.template.read"]),
+  "close.task.create": Object.freeze(["close.task.read"]),
+  "close.task.assign": Object.freeze(["close.task.read"]),
+  "close.task.work": Object.freeze(["close.task.read"]),
+  "close.task.review": Object.freeze(["close.task.read"]),
+  "close.task.waive": Object.freeze(["close.task.review"]),
+  "close.task.admin": Object.freeze(["close.task.read"]),
   "bank.reconcile.write": Object.freeze(["bank.reconcile.read"]),
   "payments.batch.approve": Object.freeze(["payments.batch.read"]),
   "workflow.definition.write": Object.freeze(["workflow.definition.read"]),
@@ -98,6 +105,20 @@ export const PERMISSION_CONFLICTS = Object.freeze([
     rightPermissionCode: PERIOD_CLOSE_REOPEN_PERMISSION_CODE,
     severity: "warn",
     reason: "SoD: period-close execution and reopen authority should be separated where practical.",
+  }),
+  Object.freeze({
+    leftPermissionCode: "close.task.work",
+    rightPermissionCode: "close.task.review",
+    severity: "warn",
+    reason:
+      "Maker-checker: close task preparers should not review their own tasks; combining these permissions is an override risk, not a hard assignment error.",
+  }),
+  Object.freeze({
+    leftPermissionCode: "close.task.work",
+    rightPermissionCode: "close.task.waive",
+    severity: "warn",
+    reason:
+      "Maker-checker: close task preparers should not waive their own tasks; combining these permissions is an override risk, not a hard assignment error.",
   }),
 ]);
 
