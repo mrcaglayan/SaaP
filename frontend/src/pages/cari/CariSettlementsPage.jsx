@@ -6,9 +6,12 @@ import {
   applyCariBankSettlement,
   describeCariSettlementContext,
   getCariSettlementErrorHint,
-  getCariSettlementOpenItemsPreview,
   reverseCariSettlement,
 } from "../../api/cariSettlements.js";
+import {
+  getCariCounterpartyStatementReport,
+  getCariOpenItemsReport,
+} from "../../api/cariReports.js";
 import {
   listCashRegisters,
   listCashSessions,
@@ -884,7 +887,7 @@ export default function CariSettlementsPage({ direction = "" }) {
   );
   const bankApplyOuCurrentAccountSetupBlocked = Boolean(
     bankApplyOuCurrentAccountReadiness?.applicable &&
-      !bankApplyOuCurrentAccountReadiness.ready
+    !bankApplyOuCurrentAccountReadiness.ready
   );
   const applyFunctionalCurrencyCode = useMemo(
     () => resolveLegalEntityCurrencyCode(legalEntities, applyForm.legalEntityId),
@@ -947,7 +950,7 @@ export default function CariSettlementsPage({ direction = "" }) {
           normalizeCurrencyCode(row.documentCurrencyCode) &&
           normalizeCurrencyCode(row.settlementCurrencyCode) &&
           normalizeCurrencyCode(row.documentCurrencyCode) !==
-            normalizeCurrencyCode(row.settlementCurrencyCode)
+          normalizeCurrencyCode(row.settlementCurrencyCode)
       ),
     [previewRows]
   );
@@ -987,28 +990,27 @@ export default function CariSettlementsPage({ direction = "" }) {
   const linkedRegisterSessionMode = toUpper(selectedLinkedRegister?.session_mode);
   const linkedCashRegisterLookupEmpty = Boolean(
     canReadCashRegisters &&
-      toPositiveInt(applyForm.legalEntityId) &&
-      linkedRegisterOptions.length === 0
+    toPositiveInt(applyForm.legalEntityId) &&
+    linkedRegisterOptions.length === 0
   );
   const linkedCashSessionRequiredByRegister = Boolean(
     linkedCashForm.createLinkedCashTransaction &&
-      toUpper(linkedCashForm.paymentChannel) === "CASH" &&
-      linkedRegisterSessionMode === "REQUIRED"
+    toUpper(linkedCashForm.paymentChannel) === "CASH" &&
+    linkedRegisterSessionMode === "REQUIRED"
   );
   const linkedCashSessionValueMissing = Boolean(
     linkedCashSessionRequiredByRegister && !toPositiveInt(linkedCashForm.cashSessionId)
   );
   const linkedCashSessionMissingOpenSession = Boolean(
     linkedCashSessionRequiredByRegister &&
-      canReadCashSessions &&
-      toPositiveInt(linkedCashForm.registerId) &&
-      linkedRegisterOpenSessions.length === 0
+    canReadCashSessions &&
+    toPositiveInt(linkedCashForm.registerId) &&
+    linkedRegisterOpenSessions.length === 0
   );
   const linkedCashSessionFieldInvalid =
     linkedCashSessionValueMissing || linkedCashSessionMissingOpenSession;
-  const linkedCashSessionInputClass = `mt-1 w-full rounded-md border px-3 py-2 text-sm font-normal ${
-    linkedCashSessionFieldInvalid ? "border-rose-300 bg-rose-50" : "border-slate-300"
-  }`;
+  const linkedCashSessionInputClass = `mt-1 w-full rounded-md border px-3 py-2 text-sm font-normal ${linkedCashSessionFieldInvalid ? "border-rose-300 bg-rose-50" : "border-slate-300"
+    }`;
   const selectedApplyPreviewRows = useMemo(() => {
     if (applyForm.autoAllocate) {
       return previewRows.filter(
@@ -1031,10 +1033,10 @@ export default function CariSettlementsPage({ direction = "" }) {
       toUpper(linkedCashForm.paymentChannel) === "CASH";
     const collectorContext = usesLinkedCashCollector
       ? {
-          operatingUnitId: toPositiveInt(selectedLinkedRegister?.operating_unit_id),
-          operatingUnitCode: String(selectedLinkedRegister?.operating_unit_code || "").trim(),
-          operatingUnitName: String(selectedLinkedRegister?.operating_unit_name || "").trim(),
-        }
+        operatingUnitId: toPositiveInt(selectedLinkedRegister?.operating_unit_id),
+        operatingUnitCode: String(selectedLinkedRegister?.operating_unit_code || "").trim(),
+        operatingUnitName: String(selectedLinkedRegister?.operating_unit_name || "").trim(),
+      }
       : ownerContext;
 
     return describeCariSettlementContext(
@@ -1088,8 +1090,8 @@ export default function CariSettlementsPage({ direction = "" }) {
       const selectedCounterpartyRow =
         selectedCounterpartyId
           ? (counterpartyOptions || []).find(
-              (row) => toPositiveInt(row?.id) === selectedCounterpartyId
-            ) || null
+            (row) => toPositiveInt(row?.id) === selectedCounterpartyId
+          ) || null
           : null;
       const mappedAccountMeta = resolveCounterpartySettlementAccountMeta(
         selectedCounterpartyRow,
@@ -1109,22 +1111,22 @@ export default function CariSettlementsPage({ direction = "" }) {
           fallbackName ||
           (isCounterpartyMappedAccount
             ? l(
-                `Counterparty ${mappedAccountMeta.accountRoleLabel} account (ID ${selectedAccountId})`,
-                `Cari ${mappedAccountMeta.accountRoleLabel} hesabi (ID ${selectedAccountId})`
-              )
+              `Counterparty ${mappedAccountMeta.accountRoleLabel} account (ID ${selectedAccountId})`,
+              `Cari ${mappedAccountMeta.accountRoleLabel} hesabi (ID ${selectedAccountId})`
+            )
             : l(
-                `Selected account ID ${selectedAccountId}`,
-                `Secili hesap ID ${selectedAccountId}`
-              )),
+              `Selected account ID ${selectedAccountId}`,
+              `Secili hesap ID ${selectedAccountId}`
+            )),
         account_breadcrumb: isCounterpartyMappedAccount
           ? l(
-              `Auto-selected from counterparty ${mappedAccountMeta.accountRoleLabel} mapping`,
-              `Cari ${mappedAccountMeta.accountRoleLabel} eslemesinden otomatik secildi`
-            )
+            `Auto-selected from counterparty ${mappedAccountMeta.accountRoleLabel} mapping`,
+            `Cari ${mappedAccountMeta.accountRoleLabel} eslemesinden otomatik secildi`
+          )
           : l(
-              "Account details unavailable in current lookup results",
-              "Hesap detaylari mevcut arama sonucunda kullanilamiyor"
-            ),
+            "Account details unavailable in current lookup results",
+            "Hesap detaylari mevcut arama sonucunda kullanilamiyor"
+          ),
       });
     }
     return rows.map(mapGlAccountLookupOption).filter((row) => row.value);
@@ -1272,9 +1274,9 @@ export default function CariSettlementsPage({ direction = "" }) {
       const settlementLabel = String(row?.settlementNo || `#${row?.settlementBatchId || "-"}`);
       const counterpartyLabel = String(
         row?.counterpartyCodeCurrent ||
-          row?.counterpartyNameCurrent ||
-          row?.counterpartyId ||
-          "-"
+        row?.counterpartyNameCurrent ||
+        row?.counterpartyId ||
+        "-"
       ).trim();
       const settlementDate = String(row?.settlementDate || "-").trim();
       const totalAllocated = formatMoneyText(row?.totalAllocatedTxn, row?.currencyCode);
@@ -1293,7 +1295,7 @@ export default function CariSettlementsPage({ direction = "" }) {
     }
     return (
       (reverseSettlementRows || []).find(
-      (row) => toPositiveInt(row?.settlementBatchId) === settlementBatchId
+        (row) => toPositiveInt(row?.settlementBatchId) === settlementBatchId
       ) || null
     );
   }, [reverseForm.settlementBatchId, reverseSettlementRows]);
@@ -1323,17 +1325,17 @@ export default function CariSettlementsPage({ direction = "" }) {
   );
   const canInlineCreateCounterpartyInApplyForm = Boolean(
     canApply &&
-      canReadCards &&
-      canUpsertCards &&
-      toPositiveInt(applyForm.legalEntityId) &&
-      applyInlineCounterpartyName
+    canReadCards &&
+    canUpsertCards &&
+    toPositiveInt(applyForm.legalEntityId) &&
+    applyInlineCounterpartyName
   );
   const canInlineCreateCounterpartyInBankApplyForm = Boolean(
     canBankApply &&
-      canReadCards &&
-      canUpsertCards &&
-      toPositiveInt(bankApplyForm.legalEntityId) &&
-      bankApplyInlineCounterpartyName
+    canReadCards &&
+    canUpsertCards &&
+    toPositiveInt(bankApplyForm.legalEntityId) &&
+    bankApplyInlineCounterpartyName
   );
 
   const applyIntentScope = useMemo(
@@ -1394,12 +1396,13 @@ export default function CariSettlementsPage({ direction = "" }) {
       setPreviewLoading(true);
       setPreviewError("");
       try {
-        const payload = await getCariSettlementOpenItemsPreview({
+        const payload = await getCariOpenItemsReport({
           legalEntityId: previewLegalEntityId,
-          operatingUnitId: toPositiveInt(workingContext?.operatingUnitId) || undefined,
           counterpartyId: previewCounterpartyId,
           direction: previewDirection || undefined,
           asOfDate: applyForm.settlementDate || todayIsoDate(),
+          status: "OPEN",
+          includeDetails: true,
           limit: 500,
         });
         if (!active) {
@@ -2436,13 +2439,13 @@ export default function CariSettlementsPage({ direction = "" }) {
           setLinkedCashMessage(
             replayState.idempotentReplay
               ? l(
-                  `Linked cash transaction already exists. cashTransactionId=${linkedCashId}`,
-                  `Bagli nakit islemi zaten mevcut. cashTransactionId=${linkedCashId}`
-                )
+                `Linked cash transaction already exists. cashTransactionId=${linkedCashId}`,
+                `Bagli nakit islemi zaten mevcut. cashTransactionId=${linkedCashId}`
+              )
               : l(
-                  `Linked cash transaction created. cashTransactionId=${linkedCashId}`,
-                  `Bagli nakit islemi olusturuldu. cashTransactionId=${linkedCashId}`
-                )
+                `Linked cash transaction created. cashTransactionId=${linkedCashId}`,
+                `Bagli nakit islemi olusturuldu. cashTransactionId=${linkedCashId}`
+              )
           );
         }
       }
@@ -2948,14 +2951,14 @@ export default function CariSettlementsPage({ direction = "" }) {
               {applyLegalEntityId || "-"}.
             </p>
             {Array.isArray(applyCariReadiness?.missingPurposeCodes) &&
-            applyCariReadiness.missingPurposeCodes.length > 0 ? (
+              applyCariReadiness.missingPurposeCodes.length > 0 ? (
               <p className="mt-1">
                 {l("Missing purpose codes:", "Eksik amac kodlari:")}{" "}
                 {applyCariReadiness.missingPurposeCodes.join(", ")}
               </p>
             ) : null}
             {Array.isArray(applyCariReadiness?.invalidMappings) &&
-            applyCariReadiness.invalidMappings.length > 0 ? (
+              applyCariReadiness.invalidMappings.length > 0 ? (
               <ul className="mt-2 list-disc pl-5">
                 {applyCariReadiness.invalidMappings.map((row, index) => (
                   <li key={`apply-cari-invalid-${index}`}>
@@ -3173,9 +3176,9 @@ export default function CariSettlementsPage({ direction = "" }) {
                 </span>
               ) : null}
               {!applyOffsetAccountsLoading &&
-              !applyOffsetAccountsError &&
-              canReadGlAccounts &&
-              applyOffsetAccountChoices.length === 0 ? (
+                !applyOffsetAccountsError &&
+                canReadGlAccounts &&
+                applyOffsetAccountChoices.length === 0 ? (
                 <span className="mt-1 block text-[11px] font-normal normal-case text-slate-500">
                   {l(
                     "No postable ASSET accounts found for the selected legal entity.",
@@ -3225,7 +3228,7 @@ export default function CariSettlementsPage({ direction = "" }) {
           </label>
 
           {linkedCashForm.createLinkedCashTransaction &&
-          toUpper(linkedCashForm.paymentChannel) === "CASH" ? (
+            toUpper(linkedCashForm.paymentChannel) === "CASH" ? (
             <>
               {!canCreateCashTxn ? (
                 <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 md:col-span-4">
@@ -3470,7 +3473,7 @@ export default function CariSettlementsPage({ direction = "" }) {
                 />
               </label>
               {selectedLinkedRegister &&
-              toUpper(selectedLinkedRegister.currency_code) !== toUpper(applyForm.currencyCode) ? (
+                toUpper(selectedLinkedRegister.currency_code) !== toUpper(applyForm.currencyCode) ? (
                 <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 md:col-span-4">
                   {l(
                     `Register currency (${selectedLinkedRegister.currency_code}) differs from settlement currency (${toUpper(applyForm.currencyCode)}). Exchange first, then settle.`,
@@ -3728,9 +3731,9 @@ export default function CariSettlementsPage({ direction = "" }) {
                       {previewLoading
                         ? l("Loading preview...", "Onizleme yukleniyor...")
                         : l(
-                            "No currently settleable open items were found for the selected context and counterparty.",
-                            "Secili baglam ve cari icin mahsuplastirilabilir acik kalem bulunamadi."
-                          )}
+                          "No currently settleable open items were found for the selected context and counterparty.",
+                          "Secili baglam ve cari icin mahsuplastirilabilir acik kalem bulunamadi."
+                        )}
                     </td>
                   </tr>
                 ) : null}
@@ -3798,15 +3801,15 @@ export default function CariSettlementsPage({ direction = "" }) {
               <dd>{applyResult?.row?.originatingCrossContextSettlementBatchId || "-"}</dd>
             </dl>
             <pre className="mt-3 overflow-x-auto rounded-md bg-slate-900 p-3 text-xs text-slate-100">
-{JSON.stringify(
-  {
-    allocations: applyResult?.allocations || [],
-    fx: applyResult?.fx || null,
-    unapplied: applyResult?.unapplied || null,
-  },
-  null,
-  2
-)}
+              {JSON.stringify(
+                {
+                  allocations: applyResult?.allocations || [],
+                  fx: applyResult?.fx || null,
+                  unapplied: applyResult?.unapplied || null,
+                },
+                null,
+                2
+              )}
             </pre>
           </div>
         ) : null}
@@ -3933,9 +3936,9 @@ export default function CariSettlementsPage({ direction = "" }) {
               {reverseSettlementLoading
                 ? l("Loading...", "Yukleniyor...")
                 : l(
-                    `${reverseSettlementLookupOptions.length} selectable settlement(s)`,
-                    `${reverseSettlementLookupOptions.length} secilebilir mahsuplastirma`
-                  )}
+                  `${reverseSettlementLookupOptions.length} selectable settlement(s)`,
+                  `${reverseSettlementLookupOptions.length} secilebilir mahsuplastirma`
+                )}
             </div>
           </div>
 
@@ -4118,7 +4121,7 @@ export default function CariSettlementsPage({ direction = "" }) {
               <dd>{String(Boolean(reverseOriginalContext.isCrossContext))}</dd>
             </dl>
             <pre className="mt-3 overflow-x-auto rounded-md bg-slate-900 p-3 text-xs text-slate-100">
-{JSON.stringify(reverseResult, null, 2)}
+              {JSON.stringify(reverseResult, null, 2)}
             </pre>
           </>
         ) : null}
@@ -4255,7 +4258,7 @@ export default function CariSettlementsPage({ direction = "" }) {
         </form>
         {bankAttachResult ? (
           <pre className="mt-3 overflow-x-auto rounded-md bg-slate-900 p-3 text-xs text-slate-100">
-{JSON.stringify(bankAttachResult, null, 2)}
+            {JSON.stringify(bankAttachResult, null, 2)}
           </pre>
         ) : null}
       </section>
@@ -4279,14 +4282,14 @@ export default function CariSettlementsPage({ direction = "" }) {
               {bankApplyLegalEntityId || "-"}.
             </p>
             {Array.isArray(bankApplyCariReadiness?.missingPurposeCodes) &&
-            bankApplyCariReadiness.missingPurposeCodes.length > 0 ? (
+              bankApplyCariReadiness.missingPurposeCodes.length > 0 ? (
               <p className="mt-1">
                 {l("Missing purpose codes:", "Eksik amac kodlari:")}{" "}
                 {bankApplyCariReadiness.missingPurposeCodes.join(", ")}
               </p>
             ) : null}
             {Array.isArray(bankApplyCariReadiness?.invalidMappings) &&
-            bankApplyCariReadiness.invalidMappings.length > 0 ? (
+              bankApplyCariReadiness.invalidMappings.length > 0 ? (
               <ul className="mt-2 list-disc pl-5">
                 {bankApplyCariReadiness.invalidMappings.map((row, index) => (
                   <li key={`bank-apply-cari-invalid-${index}`}>
@@ -4626,7 +4629,7 @@ export default function CariSettlementsPage({ direction = "" }) {
               ) : null}
             </div>
             <pre className="mt-3 overflow-x-auto rounded-md bg-slate-900 p-3 text-xs text-slate-100">
-{JSON.stringify(bankApplyResult, null, 2)}
+              {JSON.stringify(bankApplyResult, null, 2)}
             </pre>
           </>
         ) : null}

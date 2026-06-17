@@ -7,6 +7,7 @@ import {
 import {
   createWorkflowAssignment,
   createWorkflowDefinition,
+  replaceWorkflowDefinitionSteps,
 } from "../src/services/workflows.service.js";
 import { getRequestDiagnostics } from "../src/services/approval.engine.service.js";
 import { getApprovalRequestById } from "../src/services/approvalPolicies.service.js";
@@ -159,6 +160,34 @@ async function createOrgFixtures({ tenantId, stamp }) {
   assert(legalEntityId > 0, "Failed to create legal entity");
 
   await query(
+    `INSERT INTO operating_units (
+        tenant_id,
+        legal_entity_id,
+        code,
+        name,
+        status
+     )
+     VALUES (?, ?, ?, ?, 'ACTIVE')`,
+    [
+      tenantId,
+      legalEntityId,
+      `AMX04OU${stamp}`,
+      `AMX04 Operating Unit ${stamp}`,
+    ]
+  );
+  const operatingUnitResult = await query(
+    `SELECT id
+       FROM operating_units
+      WHERE tenant_id = ?
+        AND legal_entity_id = ?
+        AND code = ?
+      LIMIT 1`,
+    [tenantId, legalEntityId, `AMX04OU${stamp}`]
+  );
+  const operatingUnitId = toPositiveInt(operatingUnitResult.rows?.[0]?.id);
+  assert(operatingUnitId > 0, "Failed to create operating unit");
+
+  await query(
     `INSERT INTO payment_terms (
         tenant_id,
         legal_entity_id,
@@ -221,28 +250,27 @@ async function createOrgFixtures({ tenantId, stamp }) {
     countryId,
     currencyCode,
     legalEntityId,
+    operatingUnitId,
     paymentTermId,
     vendorId,
   };
 }
 
-async function insertDefinitionStep({
+async function replaceBranchDefinitionSteps({
+  tenantId,
   workflowDefinitionId,
-  stageScopeType = "LEGAL_ENTITY",
 }) {
-  await query(
-    `INSERT INTO workflow_definition_steps (
-        workflow_definition_id,
-        step_no,
-        stage_scope_type,
-        required_permission_code,
-        min_approver_count,
-        allow_self_approve,
-        escalation_after_hours
-     )
-     VALUES (?, 1, ?, NULL, 1, FALSE, NULL)`,
-    [workflowDefinitionId, stageScopeType]
-  );
+  await replaceWorkflowDefinitionSteps({
+    input: {
+      tenantId,
+      definitionId: workflowDefinitionId,
+      steps: [
+        { stepNo: 1, actionCode: "SUBMIT", stageScopeType: "OPERATING_UNIT" },
+        { stepNo: 2, actionCode: "APPROVE", stageScopeType: "LEGAL_ENTITY" },
+        { stepNo: 3, actionCode: "POST", stageScopeType: "COUNTRY" },
+      ],
+    },
+  });
 }
 
 async function createAmountRoute({
@@ -250,7 +278,7 @@ async function createAmountRoute({
   userId,
   code,
   name,
-  legalEntityId,
+  operatingUnitId,
   minAmount,
   maxAmount,
 }) {
@@ -265,9 +293,9 @@ async function createAmountRoute({
       versionNo: 1,
     },
   });
-  await insertDefinitionStep({
+  await replaceBranchDefinitionSteps({
+    tenantId,
     workflowDefinitionId: definition.id,
-    stageScopeType: "LEGAL_ENTITY",
   });
   const assignment = await createWorkflowAssignment({
     req: null,
@@ -277,7 +305,7 @@ async function createAmountRoute({
       userId,
       processType: AP_DOCUMENT_WORKFLOW_PROCESS_TYPE,
       workflowDefinitionId: definition.id,
-      legalEntityId,
+      operatingUnitId,
       amountBasis: "BASE_AMOUNT",
       minAmount,
       maxAmount,
@@ -295,6 +323,7 @@ async function createDraftDocument({
   tenantId,
   userId,
   legalEntityId,
+  operatingUnitId,
   counterpartyId,
   paymentTermId,
   currencyCode,
@@ -307,6 +336,7 @@ async function createDraftDocument({
       tenantId,
       userId,
       legalEntityId,
+      operatingUnitId,
       counterpartyId,
       paymentTermId,
       direction: "AP",
@@ -389,7 +419,7 @@ async function main() {
     userId,
     code: `AMX04_LOW_${stamp}`,
     name: "AMX04 Low Route",
-    legalEntityId: fixtures.legalEntityId,
+    operatingUnitId: fixtures.operatingUnitId,
     minAmount: 0,
     maxAmount: 50000,
   });
@@ -398,7 +428,7 @@ async function main() {
     userId,
     code: `AMX04_HIGH_${stamp}`,
     name: "AMX04 High Route",
-    legalEntityId: fixtures.legalEntityId,
+    operatingUnitId: fixtures.operatingUnitId,
     minAmount: 50000.01,
     maxAmount: null,
   });
@@ -408,6 +438,7 @@ async function main() {
     tenantId,
     userId,
     legalEntityId: fixtures.legalEntityId,
+    operatingUnitId: fixtures.operatingUnitId,
     counterpartyId: fixtures.vendorId,
     paymentTermId: fixtures.paymentTermId,
     currencyCode: fixtures.currencyCode,
@@ -434,16 +465,16 @@ async function main() {
         lowRequest.policySnapshot?.matched_assignment?.workflow_definition_id
       ) === toPositiveInt(lowRoute.definition.id) &&
       String(lowRequest.policySnapshot?.matched_assignment?.scope_type || "") ===
-        "LEGAL_ENTITY" &&
+        "OPERATING_UNIT" &&
       String(lowRequest.policySnapshot?.matched_assignment?.scope_layer || "") ===
-        "LEGAL_ENTITY" &&
+        "OPERATING_UNIT" &&
       String(lowRequest.policySnapshot?.matched_assignment?.amount_basis || "") ===
         "BASE_AMOUNT" &&
       toNumber(lowRequest.policySnapshot?.matched_assignment?.min_amount) === 0 &&
       toNumber(lowRequest.policySnapshot?.matched_assignment?.max_amount) === 50000 &&
       String(lowRequest.policySnapshot?.routing_context?.match_type || "") === "BAND" &&
       String(lowRequest.policySnapshot?.routing_context?.matched_scope_layer || "") ===
-        "LEGAL_ENTITY" &&
+        "OPERATING_UNIT" &&
       toNumber(lowRequest.policySnapshot?.routing_context?.evaluated_amount) === 42000 &&
       String(lowRequest.policySnapshot?.routing_context?.amount_basis || "") ===
         "BASE_AMOUNT",
@@ -490,6 +521,7 @@ async function main() {
     tenantId,
     userId,
     legalEntityId: fixtures.legalEntityId,
+    operatingUnitId: fixtures.operatingUnitId,
     counterpartyId: fixtures.vendorId,
     paymentTermId: fixtures.paymentTermId,
     currencyCode: fixtures.currencyCode,

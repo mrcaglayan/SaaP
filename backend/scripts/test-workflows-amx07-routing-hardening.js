@@ -7,6 +7,7 @@ import {
 import {
   createWorkflowAssignment,
   createWorkflowDefinition,
+  replaceWorkflowDefinitionSteps,
   resolveWorkflowAssignmentForScope,
 } from "../src/services/workflows.service.js";
 import { AP_DOCUMENT_WORKFLOW_PROCESS_TYPE } from "../../shared/cariDocumentWorkflowGovernance.js";
@@ -161,6 +162,32 @@ async function createPaymentTerm({ tenantId, legalEntityId, code, name }) {
   return paymentTermId;
 }
 
+async function createOperatingUnit({ tenantId, legalEntityId, code, name }) {
+  await query(
+    `INSERT INTO operating_units (
+        tenant_id,
+        legal_entity_id,
+        code,
+        name,
+        status
+     )
+     VALUES (?, ?, ?, ?, 'ACTIVE')`,
+    [tenantId, legalEntityId, code, name]
+  );
+  const result = await query(
+    `SELECT id
+       FROM operating_units
+      WHERE tenant_id = ?
+        AND legal_entity_id = ?
+        AND code = ?
+      LIMIT 1`,
+    [tenantId, legalEntityId, code]
+  );
+  const operatingUnitId = toPositiveInt(result.rows?.[0]?.id);
+  assert(operatingUnitId > 0, `Failed to create operating unit ${code}`);
+  return operatingUnitId;
+}
+
 async function createVendor({
   tenantId,
   legalEntityId,
@@ -198,23 +225,21 @@ async function createVendor({
   return vendorId;
 }
 
-async function insertDefinitionStep({
+async function replaceBranchDefinitionSteps({
+  tenantId,
   workflowDefinitionId,
-  stageScopeType = "LEGAL_ENTITY",
 }) {
-  await query(
-    `INSERT INTO workflow_definition_steps (
-        workflow_definition_id,
-        step_no,
-        stage_scope_type,
-        required_permission_code,
-        min_approver_count,
-        allow_self_approve,
-        escalation_after_hours
-     )
-     VALUES (?, 1, ?, NULL, 1, FALSE, NULL)`,
-    [workflowDefinitionId, stageScopeType]
-  );
+  await replaceWorkflowDefinitionSteps({
+    input: {
+      tenantId,
+      definitionId: workflowDefinitionId,
+      steps: [
+        { stepNo: 1, actionCode: "SUBMIT", stageScopeType: "OPERATING_UNIT" },
+        { stepNo: 2, actionCode: "APPROVE", stageScopeType: "LEGAL_ENTITY" },
+        { stepNo: 3, actionCode: "POST", stageScopeType: "COUNTRY" },
+      ],
+    },
+  });
 }
 
 async function createDefinition({
@@ -223,7 +248,6 @@ async function createDefinition({
   code,
   name,
   withStep = false,
-  stageScopeType = "LEGAL_ENTITY",
 }) {
   const definition = await createWorkflowDefinition({
     input: {
@@ -237,7 +261,10 @@ async function createDefinition({
     },
   });
   if (withStep) {
-    await insertDefinitionStep({ workflowDefinitionId: definition.id, stageScopeType });
+    await replaceBranchDefinitionSteps({
+      tenantId,
+      workflowDefinitionId: definition.id,
+    });
   }
   return definition;
 }
@@ -247,6 +274,7 @@ async function createRoute({
   userId,
   workflowDefinitionId,
   legalEntityId = null,
+  operatingUnitId = null,
   groupCompanyId = null,
   minAmount = null,
   maxAmount = null,
@@ -265,6 +293,7 @@ async function createRoute({
       processType: AP_DOCUMENT_WORKFLOW_PROCESS_TYPE,
       workflowDefinitionId,
       legalEntityId,
+      operatingUnitId,
       groupCompanyId,
       amountBasis: "BASE_AMOUNT",
       minAmount,
@@ -283,6 +312,7 @@ async function createFxDraftDocument({
   tenantId,
   userId,
   legalEntityId,
+  operatingUnitId,
   counterpartyId,
   paymentTermId,
 }) {
@@ -292,6 +322,7 @@ async function createFxDraftDocument({
       tenantId,
       userId,
       legalEntityId,
+      operatingUnitId,
       counterpartyId,
       paymentTermId,
       direction: "AP",
@@ -383,6 +414,12 @@ async function main() {
     code: `AMX07LEE${stamp}`,
     name: "AMX07 FX Entity",
   });
+  const fxOperatingUnitId = await createOperatingUnit({
+    tenantId,
+    legalEntityId: fxEntityId,
+    code: `AMX07OU${stamp}`,
+    name: "AMX07 FX Operating Unit",
+  });
 
   const paymentTermId = await createPaymentTerm({
     tenantId,
@@ -447,7 +484,6 @@ async function main() {
     code: `AMX07_FX_LOW_${stamp}`,
     name: "AMX07 FX Low Route",
     withStep: true,
-    stageScopeType: "LEGAL_ENTITY",
   });
   const highFxDefinition = await createDefinition({
     tenantId,
@@ -455,7 +491,6 @@ async function main() {
     code: `AMX07_FX_HIGH_${stamp}`,
     name: "AMX07 FX High Route",
     withStep: true,
-    stageScopeType: "LEGAL_ENTITY",
   });
 
   await createRoute({
@@ -531,7 +566,7 @@ async function main() {
     tenantId,
     userId,
     workflowDefinitionId: lowFxDefinition.id,
-    legalEntityId: fxEntityId,
+    operatingUnitId: fxOperatingUnitId,
     minAmount: 0,
     maxAmount: 50000,
     priority: 100,
@@ -540,7 +575,7 @@ async function main() {
     tenantId,
     userId,
     workflowDefinitionId: highFxDefinition.id,
-    legalEntityId: fxEntityId,
+    operatingUnitId: fxOperatingUnitId,
     minAmount: 50000.01,
     maxAmount: null,
     priority: 100,
@@ -616,6 +651,7 @@ async function main() {
     tenantId,
     userId,
     legalEntityId: fxEntityId,
+    operatingUnitId: fxOperatingUnitId,
     counterpartyId: vendorId,
     paymentTermId,
   });

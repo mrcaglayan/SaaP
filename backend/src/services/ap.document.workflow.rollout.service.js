@@ -2,6 +2,7 @@ import { query, withTransaction } from "../db.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 import {
   AP_DOCUMENT_WORKFLOW_PROCESS_TYPE,
+  getApWorkflowRequiredPermissionCode,
 } from "../../../shared/cariDocumentWorkflowGovernance.js";
 import { ensureUnifiedWorkflowPolicyForDefinition } from "./workflows.service.js";
 
@@ -12,14 +13,32 @@ export const DEFAULT_AP_WORKFLOW_DEFINITION_NAME =
 const DEFAULT_AP_WORKFLOW_STEPS = Object.freeze([
   Object.freeze({
     stepNo: 1,
+    actionCode: "SUBMIT",
+    stageScopeType: "OPERATING_UNIT",
+    requiredPermissionCode: getApWorkflowRequiredPermissionCode("SUBMIT"),
+    minApproverCount: 1,
+    allowSelfApprove: false,
+    escalationAfterHours: null,
+  }),
+  Object.freeze({
+    stepNo: 2,
+    actionCode: "APPROVE",
     stageScopeType: "COUNTRY",
-    requiredPermissionCode: null,
+    requiredPermissionCode: getApWorkflowRequiredPermissionCode("APPROVE"),
+    minApproverCount: 1,
+    allowSelfApprove: false,
+    escalationAfterHours: null,
+  }),
+  Object.freeze({
+    stepNo: 3,
+    actionCode: "POST",
+    stageScopeType: "COUNTRY",
+    requiredPermissionCode: getApWorkflowRequiredPermissionCode("POST"),
     minApproverCount: 1,
     allowSelfApprove: false,
     escalationAfterHours: null,
   }),
 ]);
-
 function normalizeDateOnly(value) {
   const normalized = String(value || "").trim();
   if (!normalized) {
@@ -34,25 +53,25 @@ function normalizeDateOnly(value) {
 function mapDefinitionRow(row) {
   return row
     ? {
-        exists: true,
-        definitionId: parsePositiveInt(row.id),
-        code: String(row.code || "").trim(),
-        name: String(row.name || "").trim(),
-        processType: String(row.process_type || "").trim().toUpperCase(),
-        isActive: Number(row.is_active) === 1 || row.is_active === true,
-        versionNo: Number(row.version_no || 1) || 1,
-        createdByUserId: parsePositiveInt(row.created_by_user_id),
-      }
+      exists: true,
+      definitionId: parsePositiveInt(row.id),
+      code: String(row.code || "").trim(),
+      name: String(row.name || "").trim(),
+      processType: String(row.process_type || "").trim().toUpperCase(),
+      isActive: Number(row.is_active) === 1 || row.is_active === true,
+      versionNo: Number(row.version_no || 1) || 1,
+      createdByUserId: parsePositiveInt(row.created_by_user_id),
+    }
     : {
-        exists: false,
-        definitionId: null,
-        code: DEFAULT_AP_WORKFLOW_DEFINITION_CODE,
-        name: DEFAULT_AP_WORKFLOW_DEFINITION_NAME,
-        processType: AP_DOCUMENT_WORKFLOW_PROCESS_TYPE,
-        isActive: false,
-        versionNo: 1,
-        createdByUserId: null,
-      };
+      exists: false,
+      definitionId: null,
+      code: DEFAULT_AP_WORKFLOW_DEFINITION_CODE,
+      name: DEFAULT_AP_WORKFLOW_DEFINITION_NAME,
+      processType: AP_DOCUMENT_WORKFLOW_PROCESS_TYPE,
+      isActive: false,
+      versionNo: 1,
+      createdByUserId: null,
+    };
 }
 
 function mapAssignmentScopeType(row) {
@@ -164,25 +183,26 @@ export async function ensureDefaultApWorkflowDefinition({
       [definitionId]
     );
     for (const step of DEFAULT_AP_WORKFLOW_STEPS) {
-      // Country-scoped AP reviewer authority comes from step assignment only.
-      // requiredPermissionCode is null for AP steps.
+      // Default governed AP chain: OU submit -> country approve -> country post.
       // eslint-disable-next-line no-await-in-loop
       await txQuery(
         `INSERT INTO workflow_definition_steps (
-            workflow_definition_id,
-            step_no,
-            stage_scope_type,
-            required_permission_code,
-            min_approver_count,
-            allow_self_approve,
-            escalation_after_hours
-         )
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    workflow_definition_id,
+    step_no,
+    action_code,
+    stage_scope_type,
+    required_permission_code,
+    min_approver_count,
+    allow_self_approve,
+    escalation_after_hours
+ )
+ VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           definitionId,
           step.stepNo,
+          step.actionCode,
           step.stageScopeType,
-          null,
+          step.requiredPermissionCode,
           step.minApproverCount,
           step.allowSelfApprove ? 1 : 0,
           step.escalationAfterHours,

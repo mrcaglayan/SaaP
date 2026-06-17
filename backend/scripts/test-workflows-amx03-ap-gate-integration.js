@@ -14,6 +14,7 @@ import {
 import {
   AP_DOCUMENT_WORKFLOW_PROCESS_TYPE,
   CARI_DOCUMENT_WORKFLOW_TARGET_TYPE,
+  getApWorkflowRequiredPermissionCode,
 } from "../../shared/cariDocumentWorkflowGovernance.js";
 
 function assert(condition, message) {
@@ -60,7 +61,7 @@ function makeRequestContext({ tenantId, userId, stamp, suffix }) {
   };
 }
 
-function allowAllScopes() {}
+function allowAllScopes() { }
 
 async function createTenant({ code, name }) {
   await query(
@@ -217,12 +218,41 @@ async function createOrgFixtures({ tenantId, stamp }) {
   );
   const vendorId = toPositiveInt(vendorResult.rows?.[0]?.id);
   assert(vendorId > 0, "Failed to create vendor");
+  await query(
+    `INSERT INTO operating_units (
+      tenant_id,
+      legal_entity_id,
+      code,
+      name,
+      status
+   )
+   VALUES (?, ?, ?, ?, 'ACTIVE')`,
+    [
+      tenantId,
+      legalEntityId,
+      `AMX03OU${stamp}`,
+      `AMX03 Operating Unit ${stamp}`,
+    ]
+  );
 
+  const operatingUnitResult = await query(
+    `SELECT id
+     FROM operating_units
+    WHERE tenant_id = ?
+      AND legal_entity_id = ?
+      AND code = ?
+    LIMIT 1`,
+    [tenantId, legalEntityId, `AMX03OU${stamp}`]
+  );
+
+  const operatingUnitId = toPositiveInt(operatingUnitResult.rows?.[0]?.id);
+  assert(operatingUnitId > 0, "Failed to create operating unit");
   return {
     countryId,
     currencyCode,
     legalEntityId,
     paymentTermId,
+    operatingUnitId,
     vendorId,
   };
 }
@@ -231,19 +261,59 @@ async function insertDefinitionStep({
   workflowDefinitionId,
   stageScopeType = "LEGAL_ENTITY",
 }) {
-  await query(
-    `INSERT INTO workflow_definition_steps (
-        workflow_definition_id,
-        step_no,
-        stage_scope_type,
-        required_permission_code,
-        min_approver_count,
-        allow_self_approve,
-        escalation_after_hours
-     )
-     VALUES (?, 1, ?, NULL, 1, FALSE, NULL)`,
-    [workflowDefinitionId, stageScopeType]
-  );
+  const steps = [
+    {
+      stepNo: 1,
+      actionCode: "SUBMIT",
+      stageScopeType: "OPERATING_UNIT",
+      minApproverCount: 1,
+      allowSelfApprove: false,
+      escalationAfterHours: null,
+    },
+    {
+      stepNo: 2,
+      actionCode: "APPROVE",
+      stageScopeType,
+      minApproverCount: 1,
+      allowSelfApprove: false,
+      escalationAfterHours: null,
+    },
+    {
+      stepNo: 3,
+      actionCode: "POST",
+      stageScopeType: "COUNTRY",
+      minApproverCount: 1,
+      allowSelfApprove: false,
+      escalationAfterHours: null,
+    },
+  ];
+
+  for (const step of steps) {
+    // eslint-disable-next-line no-await-in-loop
+    await query(
+      `INSERT INTO workflow_definition_steps (
+          workflow_definition_id,
+          step_no,
+          action_code,
+          stage_scope_type,
+          required_permission_code,
+          min_approver_count,
+          allow_self_approve,
+          escalation_after_hours
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        workflowDefinitionId,
+        step.stepNo,
+        step.actionCode,
+        step.stageScopeType,
+        getApWorkflowRequiredPermissionCode(step.actionCode),
+        step.minApproverCount,
+        step.allowSelfApprove ? 1 : 0,
+        step.escalationAfterHours,
+      ]
+    );
+  }
 }
 
 async function createAmountRoute({
@@ -300,6 +370,7 @@ async function createDraftDocument({
   tenantId,
   userId,
   legalEntityId,
+  operatingUnitId,
   counterpartyId,
   paymentTermId,
   currencyCode,
@@ -314,6 +385,7 @@ async function createDraftDocument({
       tenantId,
       userId,
       legalEntityId,
+      operatingUnitId,
       counterpartyId,
       paymentTermId,
       direction: "AP",
@@ -489,6 +561,7 @@ async function main() {
     tenantId,
     userId,
     legalEntityId: fixtures.legalEntityId,
+    operatingUnitId: fixtures.operatingUnitId,
     counterpartyId: fixtures.vendorId,
     paymentTermId: fixtures.paymentTermId,
     currencyCode: fixtures.currencyCode,
@@ -515,54 +588,54 @@ async function main() {
   });
   assert(
     toPositiveInt(firstInstance.workflow_definition_id) ===
-      toPositiveInt(lowRoute.definition.id),
+    toPositiveInt(lowRoute.definition.id),
     "AP submit should choose the low workflow definition from the base-amount band"
   );
   assert(
     toPositiveInt(firstRequest.targetSnapshot.workflow_assignment_id) ===
-      toPositiveInt(lowRoute.assignment.id) &&
-      toPositiveInt(firstRequest.targetSnapshot.workflow_definition_id) ===
-        toPositiveInt(lowRoute.definition.id) &&
-      String(firstRequest.targetSnapshot.workflow_definition_code || "") ===
-        String(lowRoute.definition.code || "") &&
-      String(firstRequest.targetSnapshot.workflow_definition_name || "") ===
-        String(lowRoute.definition.name || "") &&
-      toNumber(firstRequest.targetSnapshot.evaluated_amount) === 40000 &&
-      String(firstRequest.targetSnapshot.evaluated_amount_basis || "").toUpperCase() ===
-        "BASE_AMOUNT" &&
-      String(firstRequest.targetSnapshot.routing_match_type || "").toUpperCase() ===
-        "BAND" &&
-      String(
-        firstRequest.targetSnapshot.routing_matched_scope_layer || ""
-      ).toUpperCase() === "LEGAL_ENTITY" &&
-      toPositiveInt(
-        firstRequest.targetSnapshot.routing_rule_snapshot?.assignment_id
-      ) === toPositiveInt(lowRoute.assignment.id) &&
-      toPositiveInt(
-        firstRequest.targetSnapshot.routing_rule_snapshot?.workflow_definition_id
-      ) === toPositiveInt(lowRoute.definition.id) &&
-      String(firstRequest.targetSnapshot.routing_rule_snapshot?.workflow_definition_code || "") ===
-        String(lowRoute.definition.code || "") &&
-      String(firstRequest.targetSnapshot.routing_rule_snapshot?.workflow_definition_name || "") ===
-        String(lowRoute.definition.name || ""),
+    toPositiveInt(lowRoute.assignment.id) &&
+    toPositiveInt(firstRequest.targetSnapshot.workflow_definition_id) ===
+    toPositiveInt(lowRoute.definition.id) &&
+    String(firstRequest.targetSnapshot.workflow_definition_code || "") ===
+    String(lowRoute.definition.code || "") &&
+    String(firstRequest.targetSnapshot.workflow_definition_name || "") ===
+    String(lowRoute.definition.name || "") &&
+    toNumber(firstRequest.targetSnapshot.evaluated_amount) === 40000 &&
+    String(firstRequest.targetSnapshot.evaluated_amount_basis || "").toUpperCase() ===
+    "BASE_AMOUNT" &&
+    String(firstRequest.targetSnapshot.routing_match_type || "").toUpperCase() ===
+    "BAND" &&
+    String(
+      firstRequest.targetSnapshot.routing_matched_scope_layer || ""
+    ).toUpperCase() === "LEGAL_ENTITY" &&
+    toPositiveInt(
+      firstRequest.targetSnapshot.routing_rule_snapshot?.assignment_id
+    ) === toPositiveInt(lowRoute.assignment.id) &&
+    toPositiveInt(
+      firstRequest.targetSnapshot.routing_rule_snapshot?.workflow_definition_id
+    ) === toPositiveInt(lowRoute.definition.id) &&
+    String(firstRequest.targetSnapshot.routing_rule_snapshot?.workflow_definition_code || "") ===
+    String(lowRoute.definition.code || "") &&
+    String(firstRequest.targetSnapshot.routing_rule_snapshot?.workflow_definition_name || "") ===
+    String(lowRoute.definition.name || ""),
     "Submit should persist the matched routing rule, evaluated amount, and route identity into the target snapshot"
   );
   assert(
     toPositiveInt(submitted.workflowGate?.workflowAssignmentId) ===
-      toPositiveInt(lowRoute.assignment.id) &&
-      toPositiveInt(submitted.workflowGate?.workflowDefinitionId) ===
-        toPositiveInt(lowRoute.definition.id) &&
-      String(submitted.workflowGate?.workflowDefinitionCode || "") ===
-        String(lowRoute.definition.code || "") &&
-      String(submitted.workflowGate?.workflowDefinitionName || "") ===
-        String(lowRoute.definition.name || "") &&
-      toNumber(submitted.workflowGate?.evaluatedAmount) === 40000 &&
-      String(submitted.workflowGate?.evaluatedAmountBasis || "").toUpperCase() ===
-        "BASE_AMOUNT" &&
-      toPositiveInt(submitted.workflowGate?.routingRuleSnapshot?.assignment_id) ===
-        toPositiveInt(lowRoute.assignment.id) &&
-      String(submitted.workflowGate?.routingRuleSnapshot?.workflow_definition_code || "") ===
-        String(lowRoute.definition.code || ""),
+    toPositiveInt(lowRoute.assignment.id) &&
+    toPositiveInt(submitted.workflowGate?.workflowDefinitionId) ===
+    toPositiveInt(lowRoute.definition.id) &&
+    String(submitted.workflowGate?.workflowDefinitionCode || "") ===
+    String(lowRoute.definition.code || "") &&
+    String(submitted.workflowGate?.workflowDefinitionName || "") ===
+    String(lowRoute.definition.name || "") &&
+    toNumber(submitted.workflowGate?.evaluatedAmount) === 40000 &&
+    String(submitted.workflowGate?.evaluatedAmountBasis || "").toUpperCase() ===
+    "BASE_AMOUNT" &&
+    toPositiveInt(submitted.workflowGate?.routingRuleSnapshot?.assignment_id) ===
+    toPositiveInt(lowRoute.assignment.id) &&
+    String(submitted.workflowGate?.routingRuleSnapshot?.workflow_definition_code || "") ===
+    String(lowRoute.definition.code || ""),
     "Workflow gate readback should expose the persisted routing diagnostics and route label after submit"
   );
 
@@ -622,18 +695,18 @@ async function main() {
   });
   assert(
     frozenReadback.workflowGate?.state === "pending" &&
-      toPositiveInt(frozenReadback.workflowGate?.workflowDefinitionId) ===
-        toPositiveInt(lowRoute.definition.id) &&
-      String(frozenReadback.workflowGate?.workflowDefinitionCode || "") ===
-        String(lowRoute.definition.code || "") &&
-      String(frozenReadback.workflowGate?.workflowDefinitionName || "") ===
-        String(lowRoute.definition.name || "") &&
-      toPositiveInt(frozenReadback.workflowGate?.workflowAssignmentId) ===
-        toPositiveInt(lowRoute.assignment.id) &&
-      toPositiveInt(frozenReadback.workflowGate?.routingRuleSnapshot?.assignment_id) ===
-        toPositiveInt(lowRoute.assignment.id) &&
-      String(frozenReadback.workflowGate?.routingRuleSnapshot?.workflow_definition_code || "") ===
-        String(lowRoute.definition.code || ""),
+    toPositiveInt(frozenReadback.workflowGate?.workflowDefinitionId) ===
+    toPositiveInt(lowRoute.definition.id) &&
+    String(frozenReadback.workflowGate?.workflowDefinitionCode || "") ===
+    String(lowRoute.definition.code || "") &&
+    String(frozenReadback.workflowGate?.workflowDefinitionName || "") ===
+    String(lowRoute.definition.name || "") &&
+    toPositiveInt(frozenReadback.workflowGate?.workflowAssignmentId) ===
+    toPositiveInt(lowRoute.assignment.id) &&
+    toPositiveInt(frozenReadback.workflowGate?.routingRuleSnapshot?.assignment_id) ===
+    toPositiveInt(lowRoute.assignment.id) &&
+    String(frozenReadback.workflowGate?.routingRuleSnapshot?.workflow_definition_code || "") ===
+    String(lowRoute.definition.code || ""),
     "Existing workflow instances must keep their original routing snapshot and route label after admins edit the live matrix"
   );
 
@@ -703,34 +776,34 @@ async function main() {
   });
   assert(
     toPositiveInt(secondInstance.workflow_definition_id) ===
-      toPositiveInt(highRoute.definition.id) &&
-      toPositiveInt(secondRequest.targetSnapshot.workflow_assignment_id) ===
-        toPositiveInt(highRoute.assignment.id) &&
-      String(secondRequest.targetSnapshot.workflow_definition_code || "") ===
-        String(highRoute.definition.code || "") &&
-      String(secondRequest.targetSnapshot.workflow_definition_name || "") ===
-        String(highRoute.definition.name || "") &&
-      toNumber(secondRequest.targetSnapshot.evaluated_amount) === 75000 &&
-      toPositiveInt(
-        secondRequest.targetSnapshot.routing_rule_snapshot?.workflow_definition_id
-      ) === toPositiveInt(highRoute.definition.id) &&
-      String(secondRequest.targetSnapshot.routing_rule_snapshot?.workflow_definition_code || "") ===
-        String(highRoute.definition.code || ""),
+    toPositiveInt(highRoute.definition.id) &&
+    toPositiveInt(secondRequest.targetSnapshot.workflow_assignment_id) ===
+    toPositiveInt(highRoute.assignment.id) &&
+    String(secondRequest.targetSnapshot.workflow_definition_code || "") ===
+    String(highRoute.definition.code || "") &&
+    String(secondRequest.targetSnapshot.workflow_definition_name || "") ===
+    String(highRoute.definition.name || "") &&
+    toNumber(secondRequest.targetSnapshot.evaluated_amount) === 75000 &&
+    toPositiveInt(
+      secondRequest.targetSnapshot.routing_rule_snapshot?.workflow_definition_id
+    ) === toPositiveInt(highRoute.definition.id) &&
+    String(secondRequest.targetSnapshot.routing_rule_snapshot?.workflow_definition_code || "") ===
+    String(highRoute.definition.code || ""),
     "Returned documents should re-evaluate against the current matrix and persist the new high-band route identity on resubmission"
   );
   assert(
     resubmitted.workflowGate?.state === "pending" &&
-      toPositiveInt(resubmitted.workflowGate?.workflowDefinitionId) ===
-        toPositiveInt(highRoute.definition.id) &&
-      String(resubmitted.workflowGate?.workflowDefinitionCode || "") ===
-        String(highRoute.definition.code || "") &&
-      String(resubmitted.workflowGate?.workflowDefinitionName || "") ===
-        String(highRoute.definition.name || "") &&
-      toPositiveInt(resubmitted.workflowGate?.workflowAssignmentId) ===
-        toPositiveInt(highRoute.assignment.id) &&
-      toNumber(resubmitted.workflowGate?.evaluatedAmount) === 75000 &&
-      String(resubmitted.workflowGate?.routingRuleSnapshot?.workflow_definition_code || "") ===
-        String(highRoute.definition.code || ""),
+    toPositiveInt(resubmitted.workflowGate?.workflowDefinitionId) ===
+    toPositiveInt(highRoute.definition.id) &&
+    String(resubmitted.workflowGate?.workflowDefinitionCode || "") ===
+    String(highRoute.definition.code || "") &&
+    String(resubmitted.workflowGate?.workflowDefinitionName || "") ===
+    String(highRoute.definition.name || "") &&
+    toPositiveInt(resubmitted.workflowGate?.workflowAssignmentId) ===
+    toPositiveInt(highRoute.assignment.id) &&
+    toNumber(resubmitted.workflowGate?.evaluatedAmount) === 75000 &&
+    String(resubmitted.workflowGate?.routingRuleSnapshot?.workflow_definition_code || "") ===
+    String(highRoute.definition.code || ""),
     "Resubmitted workflow gate readback should expose the newly matched routing snapshot and route label"
   );
 

@@ -7368,6 +7368,35 @@ function assertCariDocumentWorkflowStepAccess({
   );
 }
 
+function assertApSubmitStepMatchesDocumentShape({
+  documentRow,
+  submitStep,
+}) {
+  const documentOperatingUnitId = parsePositiveInt(
+    documentRow?.operating_unit_id ?? documentRow?.operatingUnitId
+  );
+  const actualStageScopeType = normalizeUpperText(submitStep?.stageScopeType);
+  const expectedStageScopeType = documentOperatingUnitId
+    ? "OPERATING_UNIT"
+    : "LEGAL_ENTITY";
+
+  // Branch AP submit authority must stay at OU scope; HQ documents have no OU
+  // owner, so their submit stage must be legal-entity scoped.
+  if (actualStageScopeType !== expectedStageScopeType) {
+    throw conflictError(
+      "AP submit workflow scope does not match the document ownership shape",
+      "WORKFLOW_SUBMIT_SCOPE_MISMATCH",
+      {
+        documentOperatingUnitId: documentOperatingUnitId || null,
+        expectedStageScopeType,
+        actualStageScopeType: actualStageScopeType || null,
+        stepNo: submitStep?.stepNo || null,
+        actionCode: submitStep?.actionCode || null,
+      }
+    );
+  }
+}
+
 async function loadCariDocumentRuntimeDefinitionSteps({
   tenantId,
   workflowDefinitionId,
@@ -9342,6 +9371,10 @@ export async function submitCariDocumentById({
         "WORKFLOW_DEFINITION_INVALID"
       );
     }
+    assertApSubmitStepMatchesDocumentShape({
+      documentRow: lockedDocument,
+      submitStep,
+    });
     assertCariDocumentWorkflowStepAccess({
       req,
       assertScopeAccess,
@@ -9557,12 +9590,17 @@ export async function cancelCariDraftDocumentById({
       throw new Error("Document cancel readback failed");
     }
 
+    const cancelAuditAction =
+      String(existing.status || "").toUpperCase() === "DRAFT"
+        ? "cari.document.draft.cancel"
+        : "cari.document.cancel";
+
     await insertAuditLog({
       req,
       runQuery: tx.query,
       tenantId,
       userId: payload.userId,
-      action: "cari.document.draft.cancel",
+      action: cancelAuditAction,
       legalEntityId: existingLegalEntityId,
       documentId,
       payload: {
@@ -9571,7 +9609,6 @@ export async function cancelCariDraftDocumentById({
         cancelledWorkflowInstanceId,
       },
     });
-
     return mapDocumentRowWithWorkflowGate(row, {
       tenantId,
       runQuery: tx.query,
