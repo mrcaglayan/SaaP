@@ -32,6 +32,7 @@
     "test:close-tasks:sod": "node scripts/test-close-task-sod-rules.js",
     "test:close-tasks:source-refs": "node scripts/test-close-task-source-ref-registry.js",
     "test:close-tasks:generic-scope-backfill": "node scripts/test-close-task-generic-scope-backfill.js",
+    "test:close-tasks:prctm03": "node scripts/test-close-task-prctm03-contract.js",
     "test:cash-pr06": "node scripts/test-cash-pr06-register-session.js",
     "test:cash-pr07": "node scripts/test-cash-pr07-lifecycle.js",
     "test:cash-pr08": "node scripts/test-cash-pr08-gl-posting.js",

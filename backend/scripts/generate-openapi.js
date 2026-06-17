@@ -98,6 +98,7 @@ const TAG_DESCRIPTION_MAP = new Map([
   ["RevenueRecognition", "Revenue recognition schedule, run, accrual, and reporting endpoints."],
   ["Intercompany", "Intercompany relationship and reconciliation endpoints."],
   ["Consolidation", "Consolidation setup, runs, and report endpoints."],
+  ["Close", "Close cycle, checklist task, cockpit, blocker, and lock-gate endpoints."],
   ["Onboarding", "Tenant/company bootstrap flow endpoints."],
   ["Cash", "Cash register, session, transaction, and exception workflows."],
   ["Inventory", "Warehouse, stock-link materialization, valuation, and inventory movement endpoints."],
@@ -312,6 +313,9 @@ function inferTagFromPath(endpointPath) {
   }
   if (normalizedPath.startsWith("/api/v1/consolidation")) {
     return "Consolidation";
+  }
+  if (normalizedPath.startsWith("/api/v1/close")) {
+    return "Close";
   }
   if (normalizedPath.startsWith("/api/v1/onboarding")) {
     return "Onboarding";
@@ -8683,6 +8687,10 @@ const spec = {
     },
     { name: "Intercompany", description: "Intercompany relationship and reconciliation endpoints." },
     { name: "Consolidation", description: "Consolidation setup, runs, and report endpoints." },
+    {
+      name: "Close",
+      description: "Close cycle, checklist task, cockpit, blocker, and lock-gate endpoints.",
+    },
     { name: "Onboarding", description: "Tenant/company bootstrap flow endpoints." },
     {
       name: "Inventory",

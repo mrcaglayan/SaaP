@@ -673,6 +673,7 @@ Keep these independent from period-close execution authority.
 - `backend/src/index.js`
 - `backend/openapi.yaml`
 - `backend/scripts/generate-openapi.js`
+- `backend/scripts/test-close-task-prctm03-contract.js`
 
 Route registration:
 
@@ -811,6 +812,7 @@ Audit rule:
 - sensitive lifecycle mutations also write `audit_logs`
 - locked/closed/in-review cycles reject routine task mutations
 - OpenAPI exposes the final route contracts
+- PR-CTM-03 route/validator/lifecycle contract test passes
 
 ---
 
