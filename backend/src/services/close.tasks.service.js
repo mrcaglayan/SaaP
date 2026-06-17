@@ -28,6 +28,7 @@ import { evaluateCloseTaskSourceCheck } from "./close.task-source-checks.service
 import { resolveCloseCycleRowScope } from "./close.cycles.shared.js";
 import { listCycleItems } from "./close.cycle-items.service.js";
 import { loadMergedCloseTaskTemplates } from "./close.task-templates.service.js";
+import { resolveCloseTaskAlerts } from "./close.alerts-persistence.service.js";
 
 const SUBMITTABLE_STATUSES = new Set(["NOT_STARTED", "IN_PROGRESS", "RETURNED"]);
 const WAIVABLE_STATUSES = new Set(["NOT_STARTED", "IN_PROGRESS", "SUBMITTED", "RETURNED"]);
@@ -35,6 +36,7 @@ const CANCELLABLE_STATUSES = new Set(["NOT_STARTED", "IN_PROGRESS", "SUBMITTED",
 const REOPENABLE_STATUSES = new Set(["APPROVED", "WAIVED", "CANCELLED"]);
 const MATERIALIZATION_TEMPLATE_STATUSES = Object.freeze(["ACTIVE", "PAUSED", "DISABLED"]);
 const MATERIALIZATION_CYCLE_STATUSES = new Set(["PLANNED", "OPEN"]);
+const TASK_SOURCE_CHECK_FAILED_STATUSES = new Set(["FAILED", "ERROR", "BLOCKED"]);
 
 function notFound(message) {
   const err = new Error(message);
@@ -998,6 +1000,277 @@ function buildTaskListWhere(filters = {}, actorCtx = {}) {
   return { where: clauses.join(" AND "), params };
 }
 
+function parseDateTimeMs(value) {
+  if (!value) {
+    return null;
+  }
+  const parsed = value instanceof Date ? value : new Date(String(value).replace(" ", "T"));
+  const timestamp = parsed.getTime();
+  return Number.isNaN(timestamp) ? null : timestamp;
+}
+
+function buildCloseTaskDrillPath(taskId) {
+  const normalizedTaskId = parsePositiveInt(taskId);
+  return normalizedTaskId
+    ? `/app/donem-sonu-islemler/yillik/kapanis-gorevleri?taskId=${normalizedTaskId}`
+    : "/app/donem-sonu-islemler/yillik/kapanis-gorevleri";
+}
+
+function mapCloseTaskCockpitRow(row = {}, now = new Date()) {
+  const status = String(row.status || "").trim().toUpperCase();
+  const dueAt = row.due_at || row.dueAt || null;
+  const dueTimestamp = parseDateTimeMs(dueAt);
+  const isTerminal = isCloseTaskTerminalStatus(status);
+  const evidenceRequired = Boolean(Number(row.evidence_required ?? row.evidenceRequired ?? 0));
+  const evidenceCount = Number(row.evidence_count ?? row.evidenceCount ?? 0);
+  const evidenceMissing =
+    evidenceRequired && evidenceCount <= 0 && !["WAIVED", "CANCELLED"].includes(status);
+  const sourceCheckStatus = String(row.source_check_status ?? row.sourceCheckStatus ?? "")
+    .trim()
+    .toUpperCase();
+  const sourceCheckFailed =
+    !isTerminal && TASK_SOURCE_CHECK_FAILED_STATUSES.has(sourceCheckStatus);
+  const overdue =
+    !isTerminal &&
+    dueTimestamp !== null &&
+    dueTimestamp < (now instanceof Date ? now.getTime() : new Date(now).getTime());
+
+  return {
+    id: parsePositiveInt(row.id),
+    closeCycleId: parsePositiveInt(row.close_cycle_id ?? row.closeCycleId),
+    closeCycleItemId: parsePositiveInt(row.close_cycle_item_id ?? row.closeCycleItemId),
+    taskKey: row.task_key ?? row.taskKey ?? "",
+    taskCode: row.task_code ?? row.taskCode ?? "",
+    taskName: row.task_name ?? row.taskName ?? "",
+    taskFamily: row.task_family ?? row.taskFamily ?? "MANUAL",
+    completionMode: row.completion_mode ?? row.completionMode ?? "MANUAL",
+    status,
+    rbacScopeType: row.rbac_scope_type ?? row.rbacScopeType ?? null,
+    rbacScopeId: parsePositiveInt(row.rbac_scope_id ?? row.rbacScopeId),
+    workScopeType: row.work_scope_type ?? row.workScopeType ?? null,
+    workScopeId: parsePositiveInt(row.work_scope_id ?? row.workScopeId),
+    legalEntityId: parsePositiveInt(row.legal_entity_id ?? row.legalEntityId),
+    bookId: parsePositiveInt(row.book_id ?? row.bookId),
+    operatingUnitId: parsePositiveInt(row.operating_unit_id ?? row.operatingUnitId),
+    countryId: parsePositiveInt(row.country_id ?? row.countryId),
+    groupCompanyId: parsePositiveInt(row.group_company_id ?? row.groupCompanyId),
+    consolidationGroupId: parsePositiveInt(
+      row.consolidation_group_id ?? row.consolidationGroupId,
+    ),
+    ownerUserId: parsePositiveInt(row.owner_user_id ?? row.ownerUserId),
+    reviewerUserId: parsePositiveInt(row.reviewer_user_id ?? row.reviewerUserId),
+    dueAt,
+    evidenceRequired,
+    evidenceCount,
+    evidenceMissing,
+    requiredForCycleLock: Boolean(
+      Number(row.required_for_cycle_lock ?? row.requiredForCycleLock ?? 0),
+    ),
+    sourceCheckStatus: sourceCheckStatus || null,
+    sourceCheckFailed,
+    overdue,
+    lockBlocking: false,
+    drillPath: buildCloseTaskDrillPath(row.id),
+  };
+}
+
+function isCloseTaskLockBlocking(row = {}) {
+  if (!row.requiredForCycleLock) {
+    return false;
+  }
+  if (["WAIVED", "CANCELLED"].includes(row.status)) {
+    return false;
+  }
+  if (row.status !== "APPROVED") {
+    return true;
+  }
+  // Approved evidence-required tasks can become blocking again if their active
+  // evidence link is removed after approval; waiver/cancel remain explicit exits.
+  return Boolean(row.evidenceMissing);
+}
+
+function buildCloseTaskLockBlocker(row = {}) {
+  const evidenceOnly = row.status === "APPROVED" && row.evidenceMissing;
+  return {
+    code: evidenceOnly ? "CLOSE_TASK_EVIDENCE_MISSING" : "CLOSE_TASK_UNRESOLVED",
+    message: evidenceOnly
+      ? `${row.taskName || row.taskCode || "Close task"} requires active evidence before cycle lock.`
+      : `${row.taskName || row.taskCode || "Close task"} must be resolved before cycle lock.`,
+    severity: evidenceOnly || row.overdue ? "HIGH" : "MEDIUM",
+    blockingItemType: "CLOSE_TASK_INSTANCE",
+    blockingItemId: parsePositiveInt(row.id),
+    blockingAction: evidenceOnly ? "ATTACH_EVIDENCE" : "RESOLVE_TASK",
+    owner: row.ownerUserId ? { userId: row.ownerUserId } : null,
+    dueDate: row.dueAt || null,
+    firstBlockedAt: null,
+    drillPath: row.drillPath || buildCloseTaskDrillPath(row.id),
+    task: {
+      taskCode: row.taskCode || null,
+      taskFamily: row.taskFamily || null,
+      status: row.status || null,
+      evidenceRequired: Boolean(row.evidenceRequired),
+      evidenceCount: Number(row.evidenceCount || 0),
+    },
+  };
+}
+
+function summarizeTaskFamily(rows = []) {
+  const byFamily = new Map();
+  for (const row of rows) {
+    const key = row.taskFamily || "MANUAL";
+    const current = byFamily.get(key) || {
+      taskFamily: key,
+      total: 0,
+      open: 0,
+      approved: 0,
+      waived: 0,
+      cancelled: 0,
+      overdue: 0,
+      lockBlocking: 0,
+    };
+    current.total += 1;
+    current.open += isCloseTaskTerminalStatus(row.status) ? 0 : 1;
+    current.approved += row.status === "APPROVED" ? 1 : 0;
+    current.waived += row.status === "WAIVED" ? 1 : 0;
+    current.cancelled += row.status === "CANCELLED" ? 1 : 0;
+    current.overdue += row.overdue ? 1 : 0;
+    current.lockBlocking += row.lockBlocking ? 1 : 0;
+    byFamily.set(key, current);
+  }
+  return [...byFamily.values()].sort((left, right) =>
+    String(left.taskFamily || "").localeCompare(String(right.taskFamily || "")),
+  );
+}
+
+/**
+ * Build the task cockpit section from preloaded task rows.
+ */
+export function buildCloseTaskCockpitSummaryFromRows(
+  rows = [],
+  { userId = null, now = new Date() } = {},
+) {
+  const normalizedRows = rows.map((row) => {
+    const mapped = mapCloseTaskCockpitRow(row, now);
+    return {
+      ...mapped,
+      lockBlocking: isCloseTaskLockBlocking(mapped),
+    };
+  });
+  const normalizedUserId = parsePositiveInt(userId);
+  const counts = {
+    notStarted: normalizedRows.filter((row) => row.status === "NOT_STARTED").length,
+    inProgress: normalizedRows.filter((row) => row.status === "IN_PROGRESS").length,
+    submitted: normalizedRows.filter((row) => row.status === "SUBMITTED").length,
+    returned: normalizedRows.filter((row) => row.status === "RETURNED").length,
+    approved: normalizedRows.filter((row) => row.status === "APPROVED").length,
+    waived: normalizedRows.filter((row) => row.status === "WAIVED").length,
+    cancelled: normalizedRows.filter((row) => row.status === "CANCELLED").length,
+    overdue: normalizedRows.filter((row) => row.overdue).length,
+    evidenceMissing: normalizedRows.filter((row) => row.evidenceMissing).length,
+    sourceCheckFailed: normalizedRows.filter((row) => row.sourceCheckFailed).length,
+    lockBlocking: normalizedRows.filter((row) => row.lockBlocking).length,
+  };
+  return {
+    total: normalizedRows.length,
+    counts,
+    byFamily: summarizeTaskFamily(normalizedRows),
+    myOpenTasks: normalizedRows
+      .filter(
+        (row) =>
+          normalizedUserId &&
+          row.ownerUserId === normalizedUserId &&
+          !isCloseTaskTerminalStatus(row.status),
+      )
+      .sort((left, right) => {
+        const leftDue = parseDateTimeMs(left.dueAt) ?? Number.MAX_SAFE_INTEGER;
+        const rightDue = parseDateTimeMs(right.dueAt) ?? Number.MAX_SAFE_INTEGER;
+        return leftDue - rightDue || Number(left.id || 0) - Number(right.id || 0);
+      })
+      .slice(0, 10),
+    rows: normalizedRows.sort((left, right) => {
+      const leftDue = parseDateTimeMs(left.dueAt) ?? Number.MAX_SAFE_INTEGER;
+      const rightDue = parseDateTimeMs(right.dueAt) ?? Number.MAX_SAFE_INTEGER;
+      return leftDue - rightDue || Number(left.id || 0) - Number(right.id || 0);
+    }),
+  };
+}
+
+/**
+ * Build standard close blocker rows for lock-required tasks.
+ */
+export function buildCloseTaskLockBlockersFromRows(rows = [], options = {}) {
+  const summary = buildCloseTaskCockpitSummaryFromRows(rows, options);
+  return summary.rows
+    .filter((row) => row.lockBlocking)
+    .map((row) => buildCloseTaskLockBlocker(row));
+}
+
+async function listCloseTaskRowsForCycle(cycleId, actorCtx = {}, options = {}) {
+  const tenantId = parsePositiveInt(actorCtx.tenantId);
+  const runQuery = typeof actorCtx.runQuery === "function" ? actorCtx.runQuery : query;
+  const params = [tenantId, parsePositiveInt(cycleId)];
+  const clauses = ["cti.tenant_id = ?", "cti.close_cycle_id = ?"];
+  if (options.respectVisibility) {
+    clauses.push(buildCloseTaskVisibilityWhere(actorCtx, params, "cti"));
+  }
+
+  const result = await runQuery(
+    `SELECT
+       cti.*,
+       COALESCE(evidence.evidence_count, 0) AS evidence_count
+     FROM close_task_instances cti
+     LEFT JOIN (
+       SELECT
+         cte.tenant_id,
+         cte.close_task_instance_id,
+         COUNT(*) AS evidence_count
+       FROM close_task_evidence cte
+       JOIN evidence_objects eo
+         ON eo.id = cte.evidence_object_id
+        AND eo.tenant_id = cte.tenant_id
+       WHERE cte.status = 'ACTIVE'
+         AND eo.status = 'ACTIVE'
+       GROUP BY cte.tenant_id, cte.close_task_instance_id
+     ) evidence
+       ON evidence.tenant_id = cti.tenant_id
+      AND evidence.close_task_instance_id = cti.id
+     WHERE ${clauses.join(" AND ")}
+     ORDER BY cti.due_at IS NULL ASC, cti.due_at ASC, cti.id ASC`,
+    params,
+  );
+  return result.rows || [];
+}
+
+/**
+ * Read the close-cockpit task summary for one cycle.
+ */
+export async function buildCloseTaskCockpitSummary(cycleId, actorCtx = {}) {
+  const tenantId = parsePositiveInt(actorCtx.tenantId);
+  if (!tenantId) {
+    throw badRequest("tenantId is required");
+  }
+  const rows = await listCloseTaskRowsForCycle(cycleId, actorCtx, {
+    respectVisibility: false,
+  });
+  return buildCloseTaskCockpitSummaryFromRows(rows, {
+    userId: actorCtx.userId,
+  });
+}
+
+/**
+ * Read task-derived cycle-lock blockers for one close cycle.
+ */
+export async function listCloseTaskLockBlockers(cycleId, actorCtx = {}) {
+  const tenantId = parsePositiveInt(actorCtx.tenantId);
+  if (!tenantId) {
+    throw badRequest("tenantId is required");
+  }
+  const rows = await listCloseTaskRowsForCycle(cycleId, actorCtx, {
+    respectVisibility: false,
+  });
+  return buildCloseTaskLockBlockersFromRows(rows);
+}
+
 /**
  * Resolve a close task row scope for route-level RBAC checks.
  */
@@ -1361,6 +1634,14 @@ async function updateTaskStatus({
       note: reason || null,
       payload: { reason: reason || null },
     });
+    if (isCloseTaskTerminalStatus(nextStatus)) {
+      await resolveCloseTaskAlerts(taskId, {
+        ...actorCtx,
+        tenantId,
+        userId,
+        runQuery: tx.query,
+      });
+    }
     return { row: mapCloseTaskRow(updated) };
   });
 }

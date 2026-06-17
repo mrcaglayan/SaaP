@@ -22,9 +22,6 @@ import {
 } from "../../api/cariCounterparty.js";
 import { listFxRates } from "../../api/fxAdmin.js";
 import { listLegalEntities } from "../../api/orgAdmin.js";
-import {
-  getCariCounterpartyStatementReport,
-} from "../../api/cariReports.js";
 import { extractCariReplayAndRisks } from "../../api/cariCommon.js";
 import Combobox from "../../components/Combobox.jsx";
 import MoneyText from "../../components/MoneyText.jsx";

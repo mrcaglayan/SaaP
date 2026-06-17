@@ -75,6 +75,7 @@ function normalizeIncomingBlocker(blocker = {}) {
 export function composeCloseBlockers({
   sourceBlockers = [],
   dependencyBlockers = [],
+  taskBlockers = [],
   staleBlockers = [],
 } = {}) {
   const mergedRows = [];
@@ -83,6 +84,7 @@ export function composeCloseBlockers({
   for (const blocker of [
     ...sourceBlockers,
     ...dependencyBlockers,
+    ...taskBlockers,
     ...staleBlockers,
   ]) {
     const normalizedBlocker = normalizeIncomingBlocker(blocker);

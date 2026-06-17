@@ -47,7 +47,12 @@ import {
   buildCloseCycleReconciliationSnapshot,
   syncCloseReconciliationControlsForCycle,
 } from "./close.reconciliations.service.js";
-import { materializeCloseTasksForCycle } from "./close.tasks.service.js";
+import {
+  buildCloseTaskCockpitSummary,
+  listCloseTaskLockBlockers,
+  materializeCloseTasksForCycle,
+} from "./close.tasks.service.js";
+import { syncCloseTaskAlertsForCycle } from "./close.alerts-persistence.service.js";
 import {
   buildCloseCycleKpiSnapshot,
   syncCloseCycleKpiSnapshots,
@@ -456,6 +461,54 @@ function buildAlertRowsByItemId(rows = []) {
     rowsByItemId.set(closeCycleItemId, existing);
   }
   return rowsByItemId;
+}
+
+function buildAlertPanel(rows = []) {
+  return {
+    total: rows.length,
+    rows,
+  };
+}
+
+function buildMergedAlertSnapshot(rows = []) {
+  const sortedRows = [...rows].sort((left, right) => {
+    const severityDelta = toSeverityWeight(right?.severity) - toSeverityWeight(left?.severity);
+    if (severityDelta !== 0) {
+      return severityDelta;
+    }
+    const leftDue = left?.dueDate ? new Date(left.dueDate).getTime() : Number.MAX_SAFE_INTEGER;
+    const rightDue = right?.dueDate ? new Date(right.dueDate).getTime() : Number.MAX_SAFE_INTEGER;
+    if (leftDue !== rightDue) {
+      return leftDue - rightDue;
+    }
+    return String(left?.alertKey || "").localeCompare(String(right?.alertKey || ""));
+  });
+  return {
+    rows: sortedRows,
+    counts: {
+      total: sortedRows.length,
+      critical: sortedRows.filter((row) => row.severity === "CRITICAL").length,
+      high: sortedRows.filter((row) => row.severity === "HIGH").length,
+      medium: sortedRows.filter((row) => row.severity === "MEDIUM").length,
+      low: sortedRows.filter((row) => row.severity === "LOW").length,
+      dueSoon: sortedRows.filter((row) => row.alertType === "DUE_SOON").length,
+      overdue: sortedRows.filter((row) => row.alertType === "OVERDUE").length,
+      blocked: sortedRows.filter((row) => row.alertType === "BLOCKED").length,
+      stale: sortedRows.filter((row) => row.alertType === "STALE").length,
+    },
+    panels: {
+      overdue: buildAlertPanel(sortedRows.filter((row) => row.alertType === "OVERDUE")),
+      dueSoon: buildAlertPanel(sortedRows.filter((row) => row.alertType === "DUE_SOON")),
+      blocked: buildAlertPanel(sortedRows.filter((row) => row.alertType === "BLOCKED")),
+      stale: buildAlertPanel(sortedRows.filter((row) => row.alertType === "STALE")),
+    },
+  };
+}
+
+function mergeCloseAlertSnapshots(...snapshots) {
+  return buildMergedAlertSnapshot(
+    snapshots.flatMap((snapshot) => (Array.isArray(snapshot?.rows) ? snapshot.rows : [])),
+  );
 }
 
 function buildStaleVisibilityMessage(row) {
@@ -978,6 +1031,8 @@ async function buildCycleCockpitModel(cycleId, actorCtx = {}) {
     supportSchedules,
     reconciliations,
     currentConsolidationRunContexts,
+    taskSummary,
+    taskLockBlockers,
   ] =
     await Promise.all([
       listCycleDependencyBlockers(cycleId, {
@@ -1027,6 +1082,15 @@ async function buildCycleCockpitModel(cycleId, actorCtx = {}) {
         tenantId,
         runQuery,
       }),
+      buildCloseTaskCockpitSummary(cycleId, {
+        ...actorCtx,
+        tenantId,
+        runQuery,
+      }),
+      listCloseTaskLockBlockers(cycleId, {
+        tenantId,
+        runQuery,
+      }),
     ]);
   const dependencyRows = Array.isArray(dependencyResult?.rows) ? dependencyResult.rows : [];
   const latestStaleEventsByItemId = new Map(
@@ -1055,6 +1119,7 @@ async function buildCycleCockpitModel(cycleId, actorCtx = {}) {
     composeCloseBlockers({
       sourceBlockers: sourceBlockerResult.allRows,
       dependencyBlockers: dependencyRows,
+      taskBlockers: taskLockBlockers,
     })
   );
   const slaSnapshot = await buildCloseCycleSlaSnapshot(
@@ -1067,11 +1132,19 @@ async function buildCycleCockpitModel(cycleId, actorCtx = {}) {
       runQuery,
     }
   );
-  const alertSnapshot = await buildCloseCycleAlertSnapshot({
+  const itemAlertSnapshot = await buildCloseCycleAlertSnapshot({
     cycle,
     worklistRows: baseWorklistRows,
     slaSnapshot,
     latestStaleEventsByItemId,
+  });
+  const taskAlertResult = await syncCloseTaskAlertsForCycle(cycle.id, {
+    ...actorCtx,
+    tenantId,
+    runQuery,
+  });
+  const alertSnapshot = mergeCloseAlertSnapshots(itemAlertSnapshot, {
+    rows: taskAlertResult.rows || [],
   });
   const slaByItemId = new Map(
     (slaSnapshot?.items || []).map((row) => [parsePositiveInt(row.closeCycleItemId), row])
@@ -1135,6 +1208,7 @@ async function buildCycleCockpitModel(cycleId, actorCtx = {}) {
     journals: journalGovernance,
     supportSchedules,
     reconciliations,
+    tasks: taskSummary,
     readiness,
     kpis,
     sla: slaSnapshot,
@@ -1142,7 +1216,7 @@ async function buildCycleCockpitModel(cycleId, actorCtx = {}) {
     stale: staleSummary,
     blockers: {
       rows: allBlockers,
-      cycleLevelRows: sortBlockerRows(cycleLevelRows),
+      cycleLevelRows: sortBlockerRows([...cycleLevelRows, ...taskLockBlockers]),
       counts: {
         total: allBlockers.length,
         high: allBlockers.filter((row) => row?.severity === "HIGH").length,
@@ -2115,8 +2189,8 @@ export async function listManagerCycles(filters = {}, actorCtx = {}) {
       // This lets lock-only operators see the completion gate without needing
       // separate cockpit permissions or a failing POST round trip first.
       // eslint-disable-next-line no-await-in-loop
-      lockBlockers = sortBlockerRows(
-        await listCycleActionDependencyBlockers(
+      const [dependencyBlockers, taskBlockers] = await Promise.all([
+        listCycleActionDependencyBlockers(
           {
             closeCycleId: row.id,
             action: "LOCK",
@@ -2126,7 +2200,17 @@ export async function listManagerCycles(filters = {}, actorCtx = {}) {
             tenantId,
             runQuery,
           }
-        )
+        ),
+        listCloseTaskLockBlockers(row.id, {
+          tenantId,
+          runQuery,
+        }),
+      ]);
+      lockBlockers = sortBlockerRows(
+        composeCloseBlockers({
+          dependencyBlockers,
+          taskBlockers,
+        })
       );
     }
 
@@ -2242,6 +2326,7 @@ export async function getCycleReadiness(cycleId, actorCtx = {}) {
     sla: cockpit.sla,
     alerts: cockpit.alerts?.counts || {},
     stale: cockpit.stale?.counts || {},
+    tasks: cockpit.tasks?.counts || {},
     ...cockpit.readiness,
   };
 }
@@ -2291,16 +2376,28 @@ export async function lockCycle(cycleId, actorCtx = {}) {
       );
     }
 
-    const blockers = await listCycleActionDependencyBlockers(
-      {
-        closeCycleId: cycle.id,
-        action: "LOCK",
-      },
-      {
-        ...actorCtx,
+    const [dependencyBlockers, taskBlockers] = await Promise.all([
+      listCycleActionDependencyBlockers(
+        {
+          closeCycleId: cycle.id,
+          action: "LOCK",
+        },
+        {
+          ...actorCtx,
+          tenantId,
+          runQuery,
+        }
+      ),
+      listCloseTaskLockBlockers(cycle.id, {
         tenantId,
         runQuery,
-      }
+      }),
+    ]);
+    const blockers = sortBlockerRows(
+      composeCloseBlockers({
+        dependencyBlockers,
+        taskBlockers,
+      })
     );
     if (blockers.length > 0) {
       const firstBlocker = blockers[0];
