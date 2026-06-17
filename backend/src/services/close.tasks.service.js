@@ -26,11 +26,15 @@ import {
 import { writeCloseTaskLifecycleEvent } from "./close.task-events.service.js";
 import { evaluateCloseTaskSourceCheck } from "./close.task-source-checks.service.js";
 import { resolveCloseCycleRowScope } from "./close.cycles.shared.js";
+import { listCycleItems } from "./close.cycle-items.service.js";
+import { loadMergedCloseTaskTemplates } from "./close.task-templates.service.js";
 
 const SUBMITTABLE_STATUSES = new Set(["NOT_STARTED", "IN_PROGRESS", "RETURNED"]);
 const WAIVABLE_STATUSES = new Set(["NOT_STARTED", "IN_PROGRESS", "SUBMITTED", "RETURNED"]);
 const CANCELLABLE_STATUSES = new Set(["NOT_STARTED", "IN_PROGRESS", "SUBMITTED", "RETURNED"]);
 const REOPENABLE_STATUSES = new Set(["APPROVED", "WAIVED", "CANCELLED"]);
+const MATERIALIZATION_TEMPLATE_STATUSES = Object.freeze(["ACTIVE", "PAUSED", "DISABLED"]);
+const MATERIALIZATION_CYCLE_STATUSES = new Set(["PLANNED", "OPEN"]);
 
 function notFound(message) {
   const err = new Error(message);
@@ -74,6 +78,395 @@ function buildTaskKey(input = {}) {
     .trim()
     .toUpperCase();
   return `MANUAL:${code}:${randomUUID().slice(0, 12).toUpperCase()}`;
+}
+
+function readValue(row, ...keys) {
+  if (!row) {
+    return null;
+  }
+  for (const key of keys) {
+    if (row[key] !== undefined && row[key] !== null && row[key] !== "") {
+      return row[key];
+    }
+  }
+  return null;
+}
+
+function readPositiveInt(row, ...keys) {
+  return parsePositiveInt(readValue(row, ...keys));
+}
+
+function readUpperText(row, ...keys) {
+  return String(readValue(row, ...keys) || "")
+    .trim()
+    .toUpperCase();
+}
+
+function normalizeTemplateCode(template) {
+  return String(template?.taskCode ?? template?.task_code ?? "")
+    .trim()
+    .toUpperCase();
+}
+
+function toMysqlDateTime(value) {
+  if (!value) {
+    return null;
+  }
+  const parsed = value instanceof Date ? value : new Date(String(value).replace(" ", "T") + "Z");
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+  return parsed.toISOString().slice(0, 19).replace("T", " ");
+}
+
+function addDaysToDateTime(value, offsetDays = 0) {
+  const base = value instanceof Date ? new Date(value.getTime()) : new Date(String(value).replace(" ", "T") + "Z");
+  if (!value || Number.isNaN(base.getTime())) {
+    return null;
+  }
+  base.setUTCDate(base.getUTCDate() + Number(offsetDays || 0));
+  return toMysqlDateTime(base);
+}
+
+function collectMaterializationLegalEntityIds(cycle, cycleItems = []) {
+  const ids = new Set();
+  const cycleLegalEntityId = readPositiveInt(cycle, "legal_entity_id", "legalEntityId");
+  if (cycleLegalEntityId) {
+    ids.add(cycleLegalEntityId);
+  }
+  for (const item of cycleItems || []) {
+    const legalEntityId = readPositiveInt(item, "legal_entity_id", "legalEntityId");
+    if (legalEntityId) {
+      ids.add(legalEntityId);
+    }
+  }
+  return Array.from(ids);
+}
+
+async function loadLegalEntityContextById({ tenantId, legalEntityIds = [], runQuery = query }) {
+  const ids = Array.from(new Set((legalEntityIds || []).map(parsePositiveInt).filter(Boolean)));
+  if (ids.length === 0) {
+    return new Map();
+  }
+  const result = await runQuery(
+    `SELECT id, country_id, group_company_id
+     FROM legal_entities
+     WHERE tenant_id = ?
+       AND id IN (${ids.map(() => "?").join(", ")})`,
+    [parsePositiveInt(tenantId), ...ids],
+  );
+  const byId = new Map();
+  for (const row of result.rows || []) {
+    const id = parsePositiveInt(row.id);
+    if (!id) {
+      continue;
+    }
+    byId.set(id, {
+      legalEntityId: id,
+      countryId: parsePositiveInt(row.country_id),
+      groupCompanyId: parsePositiveInt(row.group_company_id),
+    });
+  }
+  return byId;
+}
+
+function buildMaterializationContext({ cycle, item = null, legalEntityContextById = new Map() }) {
+  const legalEntityId =
+    readPositiveInt(item, "legal_entity_id", "legalEntityId") ||
+    readPositiveInt(cycle, "legal_entity_id", "legalEntityId");
+  const entityContext = legalEntityId ? legalEntityContextById.get(legalEntityId) || {} : {};
+  return {
+    cycleId: readPositiveInt(cycle, "id"),
+    fiscalPeriodId: readPositiveInt(cycle, "fiscal_period_id", "fiscalPeriodId"),
+    cycleScopeKind: readUpperText(cycle, "scope_kind", "scopeKind"),
+    legalEntityId,
+    bookId: readPositiveInt(item, "book_id", "bookId"),
+    operatingUnitId: readPositiveInt(item, "operating_unit_id", "operatingUnitId"),
+    countryId:
+      readPositiveInt(item, "country_id", "countryId") ||
+      readPositiveInt(cycle, "country_id", "countryId") ||
+      parsePositiveInt(entityContext.countryId),
+    groupCompanyId:
+      readPositiveInt(item, "group_company_id", "groupCompanyId") ||
+      readPositiveInt(cycle, "group_company_id", "groupCompanyId") ||
+      parsePositiveInt(entityContext.groupCompanyId),
+    consolidationGroupId:
+      readPositiveInt(item, "consolidation_group_id", "consolidationGroupId") ||
+      readPositiveInt(cycle, "consolidation_group_id", "consolidationGroupId"),
+    closeCycleItemId: readPositiveInt(item, "id"),
+    itemType: readUpperText(item, "item_type", "itemType"),
+    itemOwnerUserId: readPositiveInt(item, "owner_user_id", "ownerUserId"),
+    currentSourceTargetType: readUpperText(
+      item,
+      "current_source_target_type",
+      "currentSourceTargetType",
+    ),
+    currentSourceTargetId: readPositiveInt(
+      item,
+      "current_source_target_id",
+      "currentSourceTargetId",
+    ),
+  };
+}
+
+function resolveRbacScopeForMaterializedTask(template, context) {
+  const requestedScopeType = String(template.defaultRbacScopeType || "LEGAL_ENTITY")
+    .trim()
+    .toUpperCase();
+  const requestedScopeId =
+    requestedScopeType === "OPERATING_UNIT"
+      ? context.operatingUnitId
+      : requestedScopeType === "COUNTRY"
+        ? context.countryId
+        : requestedScopeType === "GROUP"
+          ? context.groupCompanyId
+          : context.legalEntityId;
+  if (!requestedScopeId) {
+    return null;
+  }
+  const scopeType = normalizeCloseTaskRbacScope(
+    {
+      scopeType: requestedScopeType,
+      scopeId: requestedScopeId,
+    },
+    null,
+  );
+  return {
+    rbacScopeType: scopeType.scopeType,
+    rbacScopeId: scopeType.scopeId,
+    rbacScopeKey: buildCloseTaskScopeKey(scopeType.scopeType, scopeType.scopeId),
+  };
+}
+
+function resolveWorkScopeForMaterializedTask(template, context) {
+  const workScopeType = normalizeCloseTaskWorkScopeType(
+    template.defaultWorkScopeType || "CYCLE",
+    "CYCLE",
+  );
+  let workScopeId = null;
+  if (workScopeType === "CYCLE") {
+    workScopeId = context.cycleId;
+  } else if (workScopeType === "BOOK") {
+    workScopeId = context.bookId;
+  } else if (workScopeType === "CENTRAL") {
+    workScopeId = context.legalEntityId;
+  } else if (workScopeType === "OPERATING_UNIT") {
+    workScopeId = context.operatingUnitId;
+  } else if (workScopeType === "LOCAL_CLOSE_PACK") {
+    workScopeId =
+      context.itemType === "LOCAL_CLOSE_PACK"
+        ? context.currentSourceTargetId || context.closeCycleItemId
+        : null;
+  } else if (workScopeType === "PERIOD_CLOSE_RUN") {
+    workScopeId =
+      context.itemType === "PERIOD_CLOSE_RUN"
+        ? context.currentSourceTargetId || context.closeCycleItemId
+        : null;
+  } else if (workScopeType === "CONSOLIDATION_GROUP") {
+    workScopeId = context.consolidationGroupId;
+  }
+  if (!workScopeId) {
+    return null;
+  }
+  return {
+    workScopeType,
+    workScopeId,
+    workScopeKey: buildCloseTaskWorkScopeKey(workScopeType, workScopeId, context.cycleId),
+  };
+}
+
+function resolveTaskIdentityKey(template, context, workScope) {
+  const taskCode = normalizeTemplateCode(template);
+  let identityType = workScope.workScopeType;
+  let identityId = workScope.workScopeId;
+  if (workScope.workScopeType === "CENTRAL") {
+    identityType = "LEGAL_ENTITY";
+    identityId = context.legalEntityId;
+  }
+  return `${taskCode}:${identityType}:${identityId}`;
+}
+
+function resolveMaterializedTaskAssignment(strategy, cycle, context) {
+  const normalized = String(strategy || "MANUAL")
+    .trim()
+    .toUpperCase();
+  if (normalized === "CYCLE_OWNER") {
+    return readPositiveInt(cycle, "owner_user_id", "ownerUserId");
+  }
+  if (normalized === "ITEM_OWNER" || normalized === "LOCAL_CLOSE_PACK_OWNER") {
+    return context.itemOwnerUserId || readPositiveInt(cycle, "owner_user_id", "ownerUserId");
+  }
+  if (normalized === "LOCAL_CLOSE_PACK_REVIEWER") {
+    return readPositiveInt(cycle, "owner_user_id", "ownerUserId");
+  }
+  return null;
+}
+
+function resolveSourceRefForMaterializedTask(template, context) {
+  const sourceRefType = template.sourceRefType || null;
+  const strategy = String(template.sourceRefIdStrategy || "")
+    .trim()
+    .toUpperCase();
+  if (!sourceRefType || !strategy) {
+    return { sourceRefType: null, sourceRefId: null };
+  }
+  if (
+    strategy === "CURRENT_ITEM_SOURCE_TARGET" &&
+    context.currentSourceTargetId &&
+    context.currentSourceTargetType === sourceRefType
+  ) {
+    return {
+      sourceRefType,
+      sourceRefId: context.currentSourceTargetId,
+    };
+  }
+  if (strategy === "CLOSE_CYCLE_ITEM" && context.closeCycleItemId) {
+    return {
+      sourceRefType,
+      sourceRefId: context.closeCycleItemId,
+    };
+  }
+  if (strategy === "CLOSE_CYCLE" && context.cycleId) {
+    return {
+      sourceRefType,
+      sourceRefId: context.cycleId,
+    };
+  }
+  return { sourceRefType: null, sourceRefId: null };
+}
+
+function templateAppliesToCycle(template, cycleScopeKind) {
+  const templateScopeKind = String(template.cycleScopeKind || "ANY")
+    .trim()
+    .toUpperCase();
+  return templateScopeKind === "ANY" || templateScopeKind === cycleScopeKind;
+}
+
+function templateAppliesToItem(template, item) {
+  const materializationMode = String(template.materializationMode || "MANUAL_ONLY")
+    .trim()
+    .toUpperCase();
+  const anchorItemType = String(template.anchorItemType || "ANY")
+    .trim()
+    .toUpperCase();
+  if (materializationMode === "CYCLE") {
+    return anchorItemType === "ANY";
+  }
+  if (materializationMode !== "ITEM" || !item) {
+    return false;
+  }
+  const itemType = readUpperText(item, "item_type", "itemType");
+  return anchorItemType === "ANY" || anchorItemType === itemType;
+}
+
+function buildMaterializedTaskCandidate({ template, cycle, item = null, legalEntityContextById }) {
+  const context = buildMaterializationContext({ cycle, item, legalEntityContextById });
+  const rbacScope = resolveRbacScopeForMaterializedTask(template, context);
+  const workScope = resolveWorkScopeForMaterializedTask(template, context);
+  if (!rbacScope || !workScope) {
+    return null;
+  }
+  const sourceRef = resolveSourceRefForMaterializedTask(template, context);
+  const dueAt = addDaysToDateTime(
+    readValue(cycle, "due_at", "dueAt"),
+    Number(template.defaultDueOffsetDays || 0),
+  );
+  return {
+    closeCycleId: context.cycleId,
+    closeCycleItemId: context.closeCycleItemId,
+    closeTaskTemplateId: parsePositiveInt(template.id),
+    fiscalPeriodId: context.fiscalPeriodId,
+    taskKey: resolveTaskIdentityKey(template, context, workScope),
+    taskCode: normalizeTemplateCode(template),
+    taskName: template.taskName || template.task_name,
+    taskDescription: template.taskDescription || template.task_description || null,
+    taskFamily: normalizeCloseTaskFamily(template.taskFamily || template.task_family, "MANUAL"),
+    completionMode: normalizeCloseTaskCompletionMode(
+      template.completionMode || template.completion_mode,
+      "MANUAL",
+    ),
+    ...rbacScope,
+    ...workScope,
+    legalEntityId: context.legalEntityId,
+    bookId: context.bookId,
+    operatingUnitId: context.operatingUnitId,
+    countryId: context.countryId,
+    groupCompanyId: context.groupCompanyId,
+    consolidationGroupId: context.consolidationGroupId,
+    ownerUserId: resolveMaterializedTaskAssignment(
+      template.defaultOwnerStrategy,
+      cycle,
+      context,
+    ),
+    reviewerUserId: resolveMaterializedTaskAssignment(
+      template.defaultReviewerStrategy,
+      cycle,
+      context,
+    ),
+    dueAt,
+    evidenceRequired: Boolean(template.evidenceRequired),
+    requiredForCycleLock: Boolean(template.requiredForCycleLock),
+    blockerClass: template.blockerClass || null,
+    sourceCheckCode: template.sourceCheckCode || null,
+    ...sourceRef,
+  };
+}
+
+/**
+ * Resolve active template definitions into deterministic close-task instances
+ * for a close cycle and its already-provisioned close-cycle items.
+ */
+export function buildCloseTaskMaterializationCandidates({
+  cycle,
+  cycleItems = [],
+  templates = [],
+  legalEntityContextById = new Map(),
+} = {}) {
+  const cycleScopeKind = readUpperText(cycle, "scope_kind", "scopeKind");
+  const byTaskKey = new Map();
+  for (const template of templates || []) {
+    const taskCode = normalizeTemplateCode(template);
+    const status = String(template?.status || "")
+      .trim()
+      .toUpperCase();
+    if (!taskCode || status !== "ACTIVE" || !templateAppliesToCycle(template, cycleScopeKind)) {
+      continue;
+    }
+
+    const materializationMode = String(template.materializationMode || "MANUAL_ONLY")
+      .trim()
+      .toUpperCase();
+    if (materializationMode === "CYCLE" && templateAppliesToItem(template, null)) {
+      const candidate = buildMaterializedTaskCandidate({
+        template,
+        cycle,
+        legalEntityContextById,
+      });
+      if (candidate && !byTaskKey.has(candidate.taskKey)) {
+        byTaskKey.set(candidate.taskKey, candidate);
+      }
+      continue;
+    }
+
+    if (materializationMode !== "ITEM") {
+      continue;
+    }
+    for (const item of cycleItems || []) {
+      if (!templateAppliesToItem(template, item)) {
+        continue;
+      }
+      const candidate = buildMaterializedTaskCandidate({
+        template,
+        cycle,
+        item,
+        legalEntityContextById,
+      });
+      if (candidate && !byTaskKey.has(candidate.taskKey)) {
+        byTaskKey.set(candidate.taskKey, candidate);
+      }
+    }
+  }
+  return Array.from(byTaskKey.values());
 }
 
 function hasAssignmentPatch(input = {}) {
@@ -140,6 +533,250 @@ async function loadCloseTaskWithCycle({
     [parsePositiveInt(tenantId), parsePositiveInt(taskId)],
   );
   return result.rows?.[0] || null;
+}
+
+async function loadCloseTaskByCycleKey({
+  tenantId,
+  closeCycleId,
+  taskKey,
+  runQuery = query,
+}) {
+  const result = await runQuery(
+    `SELECT *
+     FROM close_task_instances
+     WHERE tenant_id = ?
+       AND close_cycle_id = ?
+       AND task_key = ?
+     LIMIT 1`,
+    [parsePositiveInt(tenantId), parsePositiveInt(closeCycleId), taskKey],
+  );
+  return result.rows?.[0] || null;
+}
+
+async function loadExistingCloseTaskKeysForCycle({ tenantId, closeCycleId, runQuery = query }) {
+  const result = await runQuery(
+    `SELECT task_key
+     FROM close_task_instances
+     WHERE tenant_id = ?
+       AND close_cycle_id = ?`,
+    [parsePositiveInt(tenantId), parsePositiveInt(closeCycleId)],
+  );
+  return new Set((result.rows || []).map((row) => row.task_key).filter(Boolean));
+}
+
+async function insertMaterializedCloseTaskCandidate({
+  tenantId,
+  userId = null,
+  candidate,
+  runQuery = query,
+}) {
+  return runQuery(
+    `INSERT INTO close_task_instances (
+       tenant_id,
+       close_cycle_id,
+       close_cycle_item_id,
+       close_task_template_id,
+       fiscal_period_id,
+       task_key,
+       task_code,
+       task_name,
+       task_description,
+       task_family,
+       completion_mode,
+       rbac_scope_type,
+       rbac_scope_id,
+       rbac_scope_key,
+       work_scope_type,
+       work_scope_id,
+       work_scope_key,
+       legal_entity_id,
+       book_id,
+       operating_unit_id,
+       country_id,
+       group_company_id,
+       consolidation_group_id,
+       owner_user_id,
+       reviewer_user_id,
+       due_at,
+       evidence_required,
+       required_for_cycle_lock,
+       blocker_class,
+       source_check_code,
+       source_ref_type,
+       source_ref_id,
+       created_by_user_id,
+       updated_by_user_id
+     )
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
+    [
+      parsePositiveInt(tenantId),
+      parsePositiveInt(candidate.closeCycleId),
+      parsePositiveInt(candidate.closeCycleItemId),
+      parsePositiveInt(candidate.closeTaskTemplateId),
+      parsePositiveInt(candidate.fiscalPeriodId),
+      candidate.taskKey,
+      candidate.taskCode,
+      candidate.taskName,
+      candidate.taskDescription || null,
+      candidate.taskFamily,
+      candidate.completionMode,
+      candidate.rbacScopeType,
+      parsePositiveInt(candidate.rbacScopeId),
+      candidate.rbacScopeKey,
+      candidate.workScopeType,
+      parsePositiveInt(candidate.workScopeId),
+      candidate.workScopeKey,
+      parsePositiveInt(candidate.legalEntityId),
+      parsePositiveInt(candidate.bookId),
+      parsePositiveInt(candidate.operatingUnitId),
+      parsePositiveInt(candidate.countryId),
+      parsePositiveInt(candidate.groupCompanyId),
+      parsePositiveInt(candidate.consolidationGroupId),
+      parsePositiveInt(candidate.ownerUserId),
+      parsePositiveInt(candidate.reviewerUserId),
+      candidate.dueAt || null,
+      Boolean(candidate.evidenceRequired),
+      Boolean(candidate.requiredForCycleLock),
+      candidate.blockerClass || null,
+      candidate.sourceCheckCode || null,
+      candidate.sourceRefType || null,
+      parsePositiveInt(candidate.sourceRefId),
+      parsePositiveInt(userId),
+      parsePositiveInt(userId),
+    ],
+  );
+}
+
+/**
+ * Materialize active close-task templates into deterministic task instances for
+ * an already-provisioned cycle. Existing task_key rows are reused unchanged.
+ */
+export async function materializeCloseTasksForCycle(cycleId, actorCtx = {}) {
+  if (typeof actorCtx?.runQuery !== "function") {
+    return withTransaction((tx) =>
+      materializeCloseTasksForCycle(cycleId, {
+        ...actorCtx,
+        runQuery: tx.query,
+        lockCycleForMaterialization: true,
+      }),
+    );
+  }
+
+  const tenantId = parsePositiveInt(actorCtx.tenantId);
+  const userId = parsePositiveInt(actorCtx.userId);
+  const runQuery = actorCtx.runQuery;
+  if (!tenantId) {
+    throw badRequest("tenantId is required");
+  }
+
+  const cycle = await loadCloseCycleForTenant({
+    tenantId,
+    cycleId,
+    runQuery,
+    forUpdate: Boolean(actorCtx.lockCycleForMaterialization),
+  });
+  if (!cycle) {
+    throw notFound("Close cycle not found");
+  }
+
+  const cycleStatus = readUpperText(cycle, "status");
+  if (!MATERIALIZATION_CYCLE_STATUSES.has(cycleStatus)) {
+    throw conflict(
+      `Close task materialization requires a PLANNED or OPEN close cycle, not ${cycleStatus}`,
+      {
+        cycleId: parsePositiveInt(cycleId),
+        status: cycleStatus,
+      },
+      "CLOSE_TASK_MATERIALIZATION_STATUS_CONFLICT",
+    );
+  }
+
+  const itemResult = await listCycleItems(cycle.id, {}, { tenantId, userId, runQuery });
+  const cycleItems = itemResult.rows || [];
+  const mergedTemplates = await loadMergedCloseTaskTemplates(
+    {
+      tenantId,
+      statuses: MATERIALIZATION_TEMPLATE_STATUSES,
+    },
+    { runQuery },
+  );
+  const activeTemplates = mergedTemplates.filter(
+    (template) => String(template.status || "").toUpperCase() === "ACTIVE",
+  );
+  const legalEntityContextById = await loadLegalEntityContextById({
+    tenantId,
+    legalEntityIds: collectMaterializationLegalEntityIds(cycle, cycleItems),
+    runQuery,
+  });
+  const candidates = buildCloseTaskMaterializationCandidates({
+    cycle,
+    cycleItems,
+    templates: activeTemplates,
+    legalEntityContextById,
+  });
+  const existingKeys = await loadExistingCloseTaskKeysForCycle({
+    tenantId,
+    closeCycleId: cycle.id,
+    runQuery,
+  });
+
+  let createdCount = 0;
+  let reusedCount = 0;
+  for (const candidate of candidates) {
+    if (existingKeys.has(candidate.taskKey)) {
+      reusedCount += 1;
+      continue;
+    }
+
+    // eslint-disable-next-line no-await-in-loop
+    const insertResult = await insertMaterializedCloseTaskCandidate({
+      tenantId,
+      userId,
+      candidate,
+      runQuery,
+    });
+    existingKeys.add(candidate.taskKey);
+    if (Number(insertResult.rows?.affectedRows || 0) !== 1) {
+      reusedCount += 1;
+      continue;
+    }
+
+    createdCount += 1;
+    // eslint-disable-next-line no-await-in-loop
+    const created = await loadCloseTaskByCycleKey({
+      tenantId,
+      closeCycleId: cycle.id,
+      taskKey: candidate.taskKey,
+      runQuery,
+    });
+    if (created) {
+      // eslint-disable-next-line no-await-in-loop
+      await writeCloseTaskLifecycleEvent({
+        runQuery,
+        req: actorCtx.req,
+        tenantId,
+        taskRow: created,
+        eventType: "CREATED",
+        fromStatus: null,
+        toStatus: "NOT_STARTED",
+        actorUserId: userId || null,
+        payload: {
+          materialized: true,
+          closeTaskTemplateId: candidate.closeTaskTemplateId || null,
+        },
+      });
+    }
+  }
+
+  return {
+    mergedTemplateCount: mergedTemplates.length,
+    activeTemplateCount: activeTemplates.length,
+    suppressedTemplateCount: mergedTemplates.length - activeTemplates.length,
+    plannedTaskCount: candidates.length,
+    createdTaskCount: createdCount,
+    reusedTaskCount: reusedCount,
+  };
 }
 
 async function reloadTaskWithCycle(tenantId, taskId, runQuery = query) {

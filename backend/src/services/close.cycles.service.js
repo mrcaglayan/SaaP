@@ -47,6 +47,7 @@ import {
   buildCloseCycleReconciliationSnapshot,
   syncCloseReconciliationControlsForCycle,
 } from "./close.reconciliations.service.js";
+import { materializeCloseTasksForCycle } from "./close.tasks.service.js";
 import {
   buildCloseCycleKpiSnapshot,
   syncCloseCycleKpiSnapshots,
@@ -2490,6 +2491,20 @@ export async function provisionCycle(cycleId, actorCtx = {}) {
         throw badRequest("Provisioning resolved no close-cycle participation rows");
       }
 
+      const closeTaskSummary = await materializeCloseTasksForCycle(cycle.id, {
+        ...actorCtx,
+        tenantId,
+        userId,
+        runQuery,
+      });
+      summary.closeTaskTemplatesActive = Number(closeTaskSummary?.activeTemplateCount || 0);
+      summary.closeTaskTemplatesSuppressed = Number(
+        closeTaskSummary?.suppressedTemplateCount || 0
+      );
+      summary.closeTasksPlanned = Number(closeTaskSummary?.plannedTaskCount || 0);
+      summary.closeTasksCreated = Number(closeTaskSummary?.createdTaskCount || 0);
+      summary.closeTasksReused = Number(closeTaskSummary?.reusedTaskCount || 0);
+
       const dependencySummary = await registerProvisionedCycleDependencies(cycle.id, {
         tenantId,
         userId,
@@ -2590,6 +2605,19 @@ export async function reprovisionCycle(cycleId, actorCtx = {}) {
         ...actorCtx,
         runQuery,
       });
+      const closeTaskSummary = await materializeCloseTasksForCycle(cycle.id, {
+        ...actorCtx,
+        tenantId,
+        userId,
+        runQuery,
+      });
+      summary.closeTaskTemplatesActive = Number(closeTaskSummary?.activeTemplateCount || 0);
+      summary.closeTaskTemplatesSuppressed = Number(
+        closeTaskSummary?.suppressedTemplateCount || 0
+      );
+      summary.closeTasksPlanned = Number(closeTaskSummary?.plannedTaskCount || 0);
+      summary.closeTasksCreated = Number(closeTaskSummary?.createdTaskCount || 0);
+      summary.closeTasksReused = Number(closeTaskSummary?.reusedTaskCount || 0);
       const dependencySummary = await syncProvisionedCycleDependencies(cycle.id, {
         tenantId,
         userId,

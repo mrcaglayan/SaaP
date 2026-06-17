@@ -121,6 +121,11 @@
       "packageScriptName": "test:payroll:pou08-release-gate"
     },
     {
+      "routePath": "/app/stok-ayarlari",
+      "smokeScriptPath": "backend/scripts/test-inventory-pr26-release-gate.js",
+      "packageScriptName": "test:inventory:release-gate"
+    },
+    {
       "routePath": "/app/stok-karti-olustur",
       "smokeScriptPath": "backend/scripts/test-inventory-pr26-release-gate.js",
       "packageScriptName": "test:inventory:release-gate"
