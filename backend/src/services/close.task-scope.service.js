@@ -275,7 +275,7 @@ export function assertCloseTaskVisibleToActor(actorCtx = {}, taskRow) {
 
 /** Assert that routine task mutations are allowed for the task's close cycle. */
 export function assertCloseTaskCycleEditable(cycleRow, actionLabel = "task mutation") {
-  const status = toUpperText(cycleRow?.status);
+  const status = toUpperText(cycleRow?.cycle_status ?? cycleRow?.cycleStatus ?? cycleRow?.status);
   if (!CLOSE_TASK_EDITABLE_CYCLE_STATUSES.includes(status)) {
     const err = new Error(`${actionLabel} requires an OPEN close cycle`);
     err.status = 409;

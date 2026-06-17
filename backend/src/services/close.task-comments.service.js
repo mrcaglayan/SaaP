@@ -1,7 +1,10 @@
 import { query, withTransaction } from "../db.js";
 import { parsePositiveInt } from "../routes/_utils.js";
 import { CLOSE_TASK_INSTANCE } from "../utils/source-ref-types.js";
-import { writeCloseTaskLifecycleEvent } from "./close.task-events.service.js";
+import {
+  writeCloseTaskAuditLog,
+  writeCloseTaskLifecycleEvent,
+} from "./close.task-events.service.js";
 import { loadCloseTaskForDependentService } from "./close.tasks.service.js";
 
 function mapCommentRow(row) {
@@ -112,7 +115,7 @@ export async function deleteCloseTaskComment(input = {}, actorCtx = {}) {
   const taskId = parsePositiveInt(input.taskId);
   const userId = parsePositiveInt(input.userId || actorCtx.userId);
   return withTransaction(async (tx) => {
-    await loadCloseTaskForDependentService({
+    const task = await loadCloseTaskForDependentService({
       tenantId,
       taskId,
       actorCtx,
@@ -137,6 +140,21 @@ export async function deleteCloseTaskComment(input = {}, actorCtx = {}) {
         parsePositiveInt(input.commentId),
       ],
     );
+    // `close_task_events` does not have COMMENT_DELETED yet; keep central audit
+    // coverage without changing the PR-CTM-01 event enum midstream.
+    await writeCloseTaskAuditLog({
+      runQuery: tx.query,
+      req: actorCtx.req,
+      tenantId,
+      userId,
+      taskRow: task,
+      action: "close.task.comment_deleted",
+      payload: {
+        commentId: parsePositiveInt(input.commentId),
+        sourceRefType: CLOSE_TASK_INSTANCE,
+        sourceRefId: taskId,
+      },
+    });
     return listCloseTaskComments({ tenantId, taskId }, { ...actorCtx, runQuery: tx.query });
   });
 }

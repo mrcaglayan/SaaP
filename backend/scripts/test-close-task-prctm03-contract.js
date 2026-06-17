@@ -10,6 +10,7 @@ import {
   isCloseTaskTerminalStatus,
   normalizeCloseTaskStatus,
 } from "../src/services/close.task-scope.service.js";
+import { CLOSE_TASK_AUDITED_EVENT_TYPES } from "../src/services/close.task-events.service.js";
 import { parseCloseTaskActionInput } from "../src/routes/close.tasks.validators.js";
 
 const scriptsDir = path.dirname(fileURLToPath(import.meta.url));
@@ -41,11 +42,26 @@ async function main() {
   assert.equal(isCloseTaskSourceCheckMode("MANUAL"), false);
 
   assert.doesNotThrow(() => assertCloseTaskCycleEditable({ status: "OPEN" }, "Submit task"));
+  assert.doesNotThrow(() =>
+    assertCloseTaskCycleEditable(
+      { status: "NOT_STARTED", cycle_status: "OPEN" },
+      "Submit task",
+    ),
+  );
   const lockedError = expectThrow(
     () => assertCloseTaskCycleEditable({ status: "LOCKED" }, "Submit task"),
     409,
   );
   assert.equal(lockedError.code, "CLOSE_TASK_CYCLE_NOT_EDITABLE");
+  const joinedTaskLockedError = expectThrow(
+    () =>
+      assertCloseTaskCycleEditable(
+        { status: "NOT_STARTED", cycle_status: "LOCKED" },
+        "Submit task",
+      ),
+    409,
+  );
+  assert.equal(joinedTaskLockedError.details?.cycleStatus, "LOCKED");
 
   const fakeReq = {
     params: { taskId: "42" },
@@ -105,6 +121,10 @@ async function main() {
   assert(serviceSource.includes("countActiveEvidenceForTask"));
   assert(serviceSource.includes("Reviewer cannot approve their own submitted task"));
   assert(serviceSource.includes("Cancelling this task requires close task admin authority"));
+  assert(CLOSE_TASK_AUDITED_EVENT_TYPES.includes("COMMENT_ADDED"));
+
+  const commentsServiceSource = readSource("src/services/close.task-comments.service.js");
+  assert(commentsServiceSource.includes("close.task.comment_deleted"));
 
   const openApiSource = readSource("openapi.yaml");
   assert(openApiSource.includes('"name": "Close"'));

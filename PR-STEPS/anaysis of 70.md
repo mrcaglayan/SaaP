@@ -1,300 +1,299 @@
-Checked the final plan and the new `project (2)` zip. Verdict: **the first implemented steps are mostly okay and aligned with the plan.** The schema foundation and permissions/role/SoD work are in place. The remaining points are not major architecture conflicts, but I would fix one small registry gap before continuing to PR-CTM-03. The final plan itself now contains the extra guardrails we locked earlier, including `CANCELLED`, `book_id`, durable task alerts, `cycle_scope_kind`, source-check fields, and explicit alert persistence requirements.
+Checked `project3.zip`. **PR-CTM-01 and PR-CTM-02 look good. PR-CTM-03 is mostly implemented, but there is one blocker bug before moving to PR-CTM-04.** The implemented scope matches the final plan’s expected schema/permission/route/service direction.
 
-## What looks good
+## Verdict
 
-### 1. PR-CTM-01 schema foundation is mostly implemented correctly
+```txt
+PR-CTM-01: OK
+PR-CTM-02: OK
+PR-CTM-03: Mostly OK, but fix 1 blocker
+```
 
-These files exist and are registered in `backend/src/migrations/index.js`:
+Do **not** continue to provisioning/materialization yet until the cycle-status guard bug below is fixed.
+
+---
+
+## Good things I confirmed
+
+### 1. Schema is implemented and registered
+
+These migrations exist and are registered:
 
 ```txt
 m203_close_task_management_foundation.js
 m204_evidence_comments_generic_scope_for_close_tasks.js
 m205_close_alerts_generic_subject.js
+m206_evidence_comments_nullable_legal_entity_scope.js
 ```
 
-`m203` correctly creates:
+`m206` is extra compared with the plan, but it is good because it completes the generic-scope path by making legacy `legal_entity_id` nullable for evidence/comments.
 
-```txt
-close_task_templates
-close_task_instances
-close_task_evidence
-close_task_events
-```
+### 2. Source-ref registry gap is fixed
 
-The important plan decisions are present:
-
-```txt
-cycle_scope_kind
-rbac_scope_type / rbac_scope_id / rbac_scope_key
-work_scope_type / work_scope_id / work_scope_key
-book_id
-completion_mode
-source_check_code
-source_ref_type
-source_ref_id
-source_check_status
-source_checked_at
-source_check_payload_json
-CANCELLED status
-required_for_cycle_lock
-close_task_evidence soft removal
-close_task_events lifecycle trail
-```
-
-So the core schema is aligned.
-
-### 2. `m204` generic evidence/comment scope is partially correct
-
-It adds:
-
-```txt
-scope_type
-scope_id
-scope_key
-```
-
-to both:
-
-```txt
-evidence_objects
-internal_comments
-```
-
-It also backfills existing rows to:
-
-```txt
-LEGAL_ENTITY:<legal_entity_id>
-```
-
-That matches the plan.
-
-One note: `legal_entity_id` is still `NOT NULL`. That is okay **only as a compatibility phase**. It means true country/group task evidence or comments still cannot be inserted without a legal entity until a later migration makes `legal_entity_id` nullable or you use the fallback strategy.
-
-So: **not a blocker for PR-CTM-01/02**, but it must be finished before country/group task evidence/comment routes are enabled.
-
-### 3. `m205` durable alert subject columns are correctly added
-
-It adds:
-
-```txt
-subject_type
-subject_id
-```
-
-and indexes for:
-
-```txt
-tenant_id, subject_type, subject_id, alert_state
-tenant_id, close_cycle_id, subject_type, alert_state, severity
-```
-
-This matches the durable alert plan.
-
-### 4. PR-CTM-02 permissions and roles are implemented
-
-I found the new permissions in `seedCore.js`:
-
-```txt
-close.task.read
-close.task.template.read
-close.task.template.write
-close.task.create
-close.task.assign
-close.task.work
-close.task.review
-close.task.waive
-close.task.admin
-```
-
-Permission groups are present:
-
-```txt
-close.task.viewer
-close.task.preparer
-close.task.reviewer
-close.task.waiver
-close.task.admin
-```
-
-Role presets are also present:
-
-```txt
-CloseTaskViewer
-CloseTaskPreparer
-CloseTaskReviewer
-CloseTaskWaiverAuthority
-CloseTaskAdmin
-```
-
-Frontend role catalog entries are also added.
-
-### 5. SoD rules are present
-
-The maker-checker warnings are implemented for:
-
-```txt
-close.task.work + close.task.review
-close.task.work + close.task.waive
-```
-
-They are warnings, not hard errors, which matches the agreed plan.
-
-### 6. Close-task RBAC scope helpers are added
-
-`authz.scope.service.js` now has close-task scope functions for:
-
-```txt
-normalizeCloseTaskRbacScope
-resolveCloseTaskRbacScope
-isCloseTaskScopeAllowed
-checkUserCanReadCloseTaskAtScope
-checkUserCanCreateCloseTaskAtScope
-checkUserCanAssignCloseTaskAtScope
-checkUserCanAdministerCloseTaskAtScope
-checkUserCanWorkCloseTask
-checkUserCanReviewCloseTask
-checkUserCanWaiveCloseTask
-checkUserCanWriteCloseTaskTemplates
-```
-
-The important part is correct: task RBAC scope allows:
-
-```txt
-OPERATING_UNIT
-LEGAL_ENTITY
-COUNTRY
-GROUP
-```
-
-and rejects `TENANT` for task-instance RBAC scope.
-
-## Issues / follow-up fixes
-
-### 1. Fix source-ref registry before PR-CTM-03
-
-This is the main thing I would fix now.
-
-Current backend source-ref registry has:
-
-```txt
-LOCAL_CLOSE_PACK
-```
-
-but does **not** have:
-
-```txt
-CLOSE_TASK_INSTANCE
-```
-
-Current frontend source-ref registry has neither:
-
-```txt
-LOCAL_CLOSE_PACK
-CLOSE_TASK_INSTANCE
-```
-
-The final plan says this is part of PR-CTM-07, but because `m204` and `m205` already introduce generic task evidence/comment/alert concepts, I would add these constants now before routes/services start.
-
-Add to:
-
-```txt
-backend/src/utils/source-ref-types.js
-frontend/src/utils/sourceRefTypes.js
-```
+Backend now has:
 
 ```js
-export const CLOSE_TASK_INSTANCE = "CLOSE_TASK_INSTANCE";
+LOCAL_CLOSE_PACK;
+CLOSE_TASK_INSTANCE;
 ```
 
-And in frontend also add:
+Frontend also has:
 
 ```js
-export const LOCAL_CLOSE_PACK = "LOCAL_CLOSE_PACK";
+LOCAL_CLOSE_PACK;
+CLOSE_TASK_INSTANCE;
 ```
 
-Then include both inside `SOURCE_REF_TYPES`.
+That previous gap is fixed.
 
-### 2. `m204` is not enough yet for true country/group evidence/comments
+### 3. PR-CTM-03 files exist
 
-As mentioned, `m204` adds generic scope columns and backfills, but does not make `legal_entity_id` nullable.
-
-That means this is not yet possible cleanly:
+These are implemented:
 
 ```txt
-scope_type = GROUP
-scope_id = 3
-legal_entity_id = NULL
-source_ref_type = CLOSE_TASK_INSTANCE
+backend/src/routes/close.tasks.routes.js
+backend/src/routes/close.tasks.validators.js
+backend/src/services/close.tasks.service.js
+backend/src/services/close.task-templates.service.js
+backend/src/services/close.task-evidence.service.js
+backend/src/services/close.task-comments.service.js
+backend/src/services/close.task-scope.service.js
+backend/src/services/close.task-source-checks.service.js
+backend/src/services/close.task-events.service.js
 ```
 
-So before enabling country/group task evidence or comments, choose one:
+Route registration is also present in:
 
 ```txt
-Option A: add a later migration making legal_entity_id nullable safely
-Option B: require a selected member legal entity for country/group task evidence
+backend/src/index.js
 ```
 
-Your plan prefers Option A. That is fine, but implementation should not forget it.
+OpenAPI has close-task paths and `CANCELLED` enum entries.
 
-### 3. Tests could not be fully run from the zip
+### 4. The route surface matches the plan
 
-I tried running:
+Implemented routes include:
+
+```txt
+/task-templates
+/tasks
+/cycles/:cycleId/tasks
+/tasks/:taskId/start
+/tasks/:taskId/submit
+/tasks/:taskId/return
+/tasks/:taskId/approve
+/tasks/:taskId/waive
+/tasks/:taskId/cancel
+/tasks/:taskId/reopen
+/tasks/:taskId/refresh-source-check
+/tasks/:taskId/events
+/tasks/:taskId/evidence
+/tasks/:taskId/comments
+```
+
+### 5. PR-CTM-03 contract shape is good
+
+The service layer has:
+
+```txt
+submit
+return
+approve
+waive
+cancel
+reopen
+refresh-source-check
+evidence attach/remove
+comment create/delete
+event writes
+audit log writes for sensitive lifecycle actions
+```
+
+The cancellation logic is also aligned with the final guardrail:
+
+```txt
+lock-required task cancellation requires close.task.admin
+creator shortcut only applies to non-lock-required manual tasks before submission
+```
+
+Good.
+
+---
+
+# Blocker bug to fix before PR-CTM-04
+
+## Cycle-status guard reads the task status instead of the cycle status
+
+In `loadCloseTaskWithCycle()`, the query selects:
+
+```sql
+cti.*,
+cc.status AS cycle_status
+```
+
+So the task row has both:
+
+```txt
+status         = task lifecycle status
+cycle_status  = close cycle status
+```
+
+But `assertCloseTaskCycleEditable()` currently checks:
+
+```js
+const status = toUpperText(cycleRow?.status);
+```
+
+That works when you pass an actual `close_cycles` row.
+
+But PR-CTM-03 often passes a **task row** into this function:
+
+```js
+assertCloseTaskCycleEditable(current, "Update close task");
+assertCloseTaskCycleEditable(current, eventType);
+assertCloseTaskCycleEditable(task, "Attach task evidence");
+assertCloseTaskCycleEditable(task, "Remove task evidence");
+assertCloseTaskCycleEditable(current, "Refresh source check");
+```
+
+For those calls, `current.status` is not `OPEN`. It is usually:
+
+```txt
+NOT_STARTED
+IN_PROGRESS
+SUBMITTED
+RETURNED
+APPROVED
+WAIVED
+CANCELLED
+```
+
+So routine actions will incorrectly fail with:
+
+```txt
+requires an OPEN close cycle
+```
+
+even when the actual close cycle is open.
+
+## Fix
+
+Change `assertCloseTaskCycleEditable()` to prefer `cycle_status` when available:
+
+```js
+export function assertCloseTaskCycleEditable(
+  cycleRow,
+  actionLabel = "task mutation",
+) {
+  const status = toUpperText(cycleRow?.cycle_status ?? cycleRow?.status);
+
+  if (!CLOSE_TASK_EDITABLE_CYCLE_STATUSES.includes(status)) {
+    const err = new Error(`${actionLabel} requires an OPEN close cycle`);
+    err.status = 409;
+    err.code = "CLOSE_TASK_CYCLE_NOT_EDITABLE";
+    err.details = { cycleStatus: status || null };
+    throw err;
+  }
+}
+```
+
+Then add a regression test:
+
+```js
+assert.doesNotThrow(() =>
+  assertCloseTaskCycleEditable(
+    { status: "NOT_STARTED", cycle_status: "OPEN" },
+    "Submit task",
+  ),
+);
+
+assert.throws(() =>
+  assertCloseTaskCycleEditable(
+    { status: "NOT_STARTED", cycle_status: "LOCKED" },
+    "Submit task",
+  ),
+);
+```
+
+This is the only real blocker I found.
+
+---
+
+## Smaller follow-up items
+
+### 1. Comment audit is not complete yet
+
+`COMMENT_ADDED` writes to `close_task_events`, but it is not included in `CLOSE_TASK_AUDITED_EVENT_TYPES`.
+
+That may be acceptable if you intend to harden comments in PR-CTM-07, but since comment routes already exist, I would add `COMMENT_ADDED` to central audit now or clearly mark it as PR-CTM-07.
+
+### 2. Comment delete does not write a task event
+
+`createCloseTaskComment()` writes `COMMENT_ADDED`.
+
+`deleteCloseTaskComment()` currently soft-deletes the comment but does not write a task event.
+
+Not a blocker for PR-CTM-03, but PR-CTM-07 should add either:
+
+```txt
+COMMENT_DELETED
+```
+
+or at least an audit log entry.
+
+### 3. Evidence upload/download are placeholders
+
+These currently return `501 NOT_IMPLEMENTED`.
+
+That is okay because storage adapter work belongs to PR-CTM-07, but the frontend should not expose upload/download as working yet.
+
+### 4. I could not run all tests from the zip
+
+These passed:
 
 ```bash
-npm run test:close-tasks:scope
-npm run test:close-tasks:sod
+npm run test:close-tasks:source-refs
+npm run test:close-tasks:generic-scope-backfill
 ```
 
-but the zip does not include `node_modules`, so Node failed on the missing `redis` package import. `package.json` does declare `redis`, so this is likely just because dependencies are not installed in the extracted zip.
+This failed only because dependencies are not installed in the extracted zip:
 
-I did run syntax checks on the new migration and test files; they passed:
+```bash
+npm run test:close-tasks:prctm03
+```
+
+Error:
 
 ```txt
-m203_close_task_management_foundation.js
-m204_evidence_comments_generic_scope_for_close_tasks.js
-m205_close_alerts_generic_subject.js
-test-close-task-scope-access.js
-test-close-task-sod-rules.js
+Cannot find package 'mysql2'
 ```
 
-After `npm install`, rerun:
+And scope/SoD tests similarly need installed dependencies such as `redis`.
+
+After `npm install`, run:
 
 ```bash
 cd backend
+npm run test:close-tasks:source-refs
+npm run test:close-tasks:generic-scope-backfill
 npm run test:close-tasks:scope
 npm run test:close-tasks:sod
+npm run test:close-tasks:prctm03
 ```
 
-## Not a problem yet
+---
 
-These are not missing for the first two PRs:
+## Final assessment
+
+The implementation is **good overall**.
+
+But fix this before continuing:
 
 ```txt
-close.tasks.routes.js
-close.tasks.service.js
-close.task-templates.service.js
-close.task-evidence.service.js
-close.task-comments.service.js
-close.task-source-checks.service.js
-close.alerts-persistence.service.js
-frontend CloseTaskBoardPage
-frontend CloseTaskTemplateAdminPage
-OpenAPI task routes
+assertCloseTaskCycleEditable must check cycle_status when a joined task row is passed.
 ```
 
-Those belong to later PRs in the plan.
-
-## Final verdict
-
-**PR-CTM-01 and PR-CTM-02 are acceptable to continue from.**
-
-Before PR-CTM-03, I would make this small patch:
+After that fix, I would consider PR-CTM-01/02/03 acceptable and safe to continue into:
 
 ```txt
-1. Add CLOSE_TASK_INSTANCE to backend source-ref registry.
-2. Add LOCAL_CLOSE_PACK and CLOSE_TASK_INSTANCE to frontend source-ref registry.
-3. Keep m204 legal_entity_id limitation documented as “generic-scope phase 1”.
-4. Run the two close-task tests after installing dependencies.
+PR-CTM-04 - Template materialization during close-cycle provisioning
 ```
-
-No major design conflict found. The implementation so far still respects the main rule: **this is a checklist task layer on top of SAAP’s close architecture, not a second close engine.**
