@@ -25,7 +25,7 @@ function assert(condition, message) {
 }
 
 const RETURNED_FOR_CORRECTION_SUMMARY =
-  "Returned to Country correction - Country resubmission required";
+  "Returned to Legal Entity correction - Legal Entity resubmission required";
 
 function toNumber(value) {
   const parsed = Number(value);
@@ -408,7 +408,7 @@ async function createGovernedApWorkflowAssignment({
         escalation_after_hours
      )
      VALUES
-       (?, 1, 'SUBMIT', 'COUNTRY', ?, 1, FALSE, NULL),
+       (?, 1, 'SUBMIT', 'LEGAL_ENTITY', ?, 1, FALSE, NULL),
        (?, 2, 'APPROVE', 'COUNTRY', ?, 1, FALSE, NULL),
        (?, 3, 'POST', 'COUNTRY', ?, 1, FALSE, NULL)`,
     [
@@ -847,11 +847,11 @@ async function main() {
         fixtures.countryId &&
       submissionRequiredReadback.workflowGate?.assignmentScopeLabel === "Country" &&
       submissionRequiredReadback.workflowGate?.waitingForSummary ===
-        "Waiting for Country submission" &&
+        "Waiting for Legal Entity submission" &&
       submissionRequiredReadback.workflowGate?.blockingReasonCode ===
         WORKFLOW_GATE_BLOCKING_REASON_CODES.WORKFLOW_APPROVAL_REQUIRED &&
       submissionRequiredReadback.workflowGate?.blockingReasonDetail ===
-        "Submission is required at Country scope before posting" &&
+        "Submission is required at Legal Entity scope before posting" &&
       submissionRequiredReadback.workflowGate?.submitPermissionCode === "cari.doc.submit" &&
       submissionRequiredReadback.workflowGate?.postPermissionCode === "cari.doc.post" &&
       Number(submissionRequiredReadback.workflowGate?.currentStepNo || 0) === 1 &&
@@ -859,8 +859,8 @@ async function main() {
       submissionRequiredReadback.workflowGate?.currentActionCode === "SUBMIT" &&
       submissionRequiredReadback.workflowGate?.currentRequiredPermissionCode ===
         "cari.doc.submit" &&
-      submissionRequiredReadback.workflowGate?.currentStageScopeType === "COUNTRY" &&
-      submissionRequiredReadback.workflowGate?.currentStageScopeLabel === "Country" &&
+      submissionRequiredReadback.workflowGate?.currentStageScopeType === "LEGAL_ENTITY" &&
+      submissionRequiredReadback.workflowGate?.currentStageScopeLabel === "Legal Entity" &&
       submissionRequiredReadback.workflowGate?.nextActionCode === "APPROVE" &&
       submissionRequiredReadback.workflowGate?.nextActionLabel === "Country approval",
     "Governed AP draft readback should expose the explicit blocked-submit step contract"
@@ -1156,7 +1156,7 @@ async function main() {
       returnedWorkflowReadback.workflowGate?.currentActionCode === "SUBMIT" &&
       returnedWorkflowReadback.workflowGate?.currentRequiredPermissionCode ===
         "cari.doc.submit" &&
-      returnedWorkflowReadback.workflowGate?.currentStageScopeLabel === "Country";
+      returnedWorkflowReadback.workflowGate?.currentStageScopeLabel === "Legal Entity";
   assert(
     returnedWorkflowExplainabilityMatches,
     `Returned governed AP readback should expose returned explainability fields from the workflow instance: ${JSON.stringify(

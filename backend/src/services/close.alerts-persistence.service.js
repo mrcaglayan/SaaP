@@ -3,6 +3,7 @@ import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 
 const CLOSE_TASK_ALERT_SUBJECT_TYPE = "CLOSE_TASK_INSTANCE";
 const CLOSE_TASK_TERMINAL_STATUSES = new Set(["APPROVED", "WAIVED", "CANCELLED"]);
+const TASK_SOURCE_CHECK_FAILED_STATUSES = new Set(["FAILED", "ERROR", "BLOCKED"]);
 
 function toUpperText(value) {
   return String(value || "")
@@ -127,6 +128,15 @@ function taskEvidenceMissing(row = {}) {
   );
 }
 
+function taskSourceCheckFailed(row = {}) {
+  const status = toUpperText(row.status);
+  const sourceCheckStatus = toUpperText(row.source_check_status ?? row.sourceCheckStatus);
+  return (
+    !["WAIVED", "CANCELLED"].includes(status) &&
+    TASK_SOURCE_CHECK_FAILED_STATUSES.has(sourceCheckStatus)
+  );
+}
+
 function taskBlocksCycleLock(row = {}) {
   const status = toUpperText(row.status);
   if (!Boolean(Number(row.required_for_cycle_lock ?? row.requiredForCycleLock ?? 0))) {
@@ -134,6 +144,9 @@ function taskBlocksCycleLock(row = {}) {
   }
   if (["WAIVED", "CANCELLED"].includes(status)) {
     return false;
+  }
+  if (taskSourceCheckFailed(row)) {
+    return true;
   }
   if (status !== "APPROVED") {
     return true;
@@ -153,13 +166,13 @@ export function buildCloseTaskAlertPayloadsFromRows(
   for (const row of rows || []) {
     const status = toUpperText(row.status);
     const taskId = parsePositiveInt(row.id);
-    if (!taskId || CLOSE_TASK_TERMINAL_STATUSES.has(status)) {
+    if (!taskId || ["WAIVED", "CANCELLED"].includes(status)) {
       continue;
     }
 
     const base = buildTaskAlertBase(row);
     const dueDate = parseDateTime(base.dueAt);
-    if (dueDate) {
+    if (dueDate && !CLOSE_TASK_TERMINAL_STATUSES.has(status)) {
       const diffHours = roundHours((dueDate.getTime() - nowDate.getTime()) / 3600000);
       if (diffHours < 0) {
         payloads.push({
@@ -194,7 +207,22 @@ export function buildCloseTaskAlertPayloadsFromRows(
       }
     }
 
-    if (taskBlocksCycleLock(row)) {
+    if (taskSourceCheckFailed(row)) {
+      payloads.push({
+        ...base,
+        alertKey: `TASK:${taskId}:SOURCE_CHECK_FAILED`,
+        alertCode: "CLOSE_TASK_SOURCE_CHECK_FAILED",
+        alertType: "BLOCKED",
+        severity: "HIGH",
+        title: "Close task source check failed",
+        message: `${buildTaskLabel(row)} has a failed source check.`,
+        payload: {
+          ...base.payload,
+          blockingAction: "REFRESH_SOURCE_CHECK",
+          sourceCheckStatus: toUpperText(row.source_check_status ?? row.sourceCheckStatus),
+        },
+      });
+    } else if (taskBlocksCycleLock(row)) {
       payloads.push({
         ...base,
         alertKey: `TASK:${taskId}:BLOCKED`,

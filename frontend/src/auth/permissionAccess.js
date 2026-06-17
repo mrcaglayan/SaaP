@@ -15,6 +15,23 @@ const VALID_SCOPE_TYPES = new Set([
   "OPERATING_UNIT",
 ]);
 
+export const CLOSE_TASK_PERMISSION_CODES = Object.freeze({
+  read: "close.task.read",
+  templateRead: "close.task.template.read",
+  templateWrite: "close.task.template.write",
+  create: "close.task.create",
+  assign: "close.task.assign",
+  work: "close.task.work",
+  review: "close.task.review",
+  waive: "close.task.waive",
+  admin: "close.task.admin",
+});
+
+export const CLOSE_TASK_VIEW_PERMISSION_CODES = Object.freeze([
+  CLOSE_TASK_PERMISSION_CODES.read,
+  CLOSE_TASK_PERMISSION_CODES.templateRead,
+]);
+
 function parsePositiveInt(value) {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
@@ -394,6 +411,94 @@ export function getPeriodCloseAdminAccess(getPermissionAccess, options = {}) {
 }
 
 /**
+ * Evaluate scoped read access for close checklist task instances.
+ */
+export function getCloseTaskReadAccess(getPermissionAccess, options = {}) {
+  return evaluatePermissionAccessWith(
+    getPermissionAccess,
+    CLOSE_TASK_PERMISSION_CODES.read,
+    options
+  );
+}
+
+/**
+ * Evaluate scoped access for creating manual close checklist tasks.
+ */
+export function getCloseTaskCreateAccess(getPermissionAccess, options = {}) {
+  return evaluatePermissionAccessWith(
+    getPermissionAccess,
+    CLOSE_TASK_PERMISSION_CODES.create,
+    options
+  );
+}
+
+/**
+ * Evaluate scoped access for owner/preparer close task actions.
+ */
+export function getCloseTaskWorkAccess(getPermissionAccess, options = {}) {
+  return evaluatePermissionAccessWith(
+    getPermissionAccess,
+    CLOSE_TASK_PERMISSION_CODES.work,
+    options
+  );
+}
+
+/**
+ * Evaluate scoped access for reviewer close task actions.
+ */
+export function getCloseTaskReviewAccess(getPermissionAccess, options = {}) {
+  return evaluatePermissionAccessWith(
+    getPermissionAccess,
+    CLOSE_TASK_PERMISSION_CODES.review,
+    options
+  );
+}
+
+/**
+ * Evaluate scoped access for close task waiver decisions.
+ */
+export function getCloseTaskWaiveAccess(getPermissionAccess, options = {}) {
+  return evaluatePermissionAccessWith(
+    getPermissionAccess,
+    CLOSE_TASK_PERMISSION_CODES.waive,
+    options
+  );
+}
+
+/**
+ * Evaluate scoped access for close task administration.
+ */
+export function getCloseTaskAdminAccess(getPermissionAccess, options = {}) {
+  return evaluatePermissionAccessWith(
+    getPermissionAccess,
+    CLOSE_TASK_PERMISSION_CODES.admin,
+    options
+  );
+}
+
+/**
+ * Evaluate tenant template catalog read access for close checklist tasks.
+ */
+export function getCloseTaskTemplateReadAccess(getPermissionAccess, options = {}) {
+  return evaluatePermissionAccessWith(
+    getPermissionAccess,
+    CLOSE_TASK_PERMISSION_CODES.templateRead,
+    options
+  );
+}
+
+/**
+ * Evaluate tenant template catalog write access for close checklist tasks.
+ */
+export function getCloseTaskTemplateWriteAccess(getPermissionAccess, options = {}) {
+  return evaluatePermissionAccessWith(
+    getPermissionAccess,
+    CLOSE_TASK_PERMISSION_CODES.templateWrite,
+    options
+  );
+}
+
+/**
  * Evaluate whether the current user can view period-close context at all.
  */
 export function getPeriodCloseViewAccess(getPermissionAccess, options = {}) {
@@ -451,6 +556,18 @@ export function hasAnyPeriodCloseViewPermission(hasPermission) {
   return Boolean(
     typeof hasPermission === "function" &&
       PERIOD_CLOSE_VIEW_PERMISSION_CODES.some((permissionCode) =>
+        hasPermission(permissionCode)
+      )
+  );
+}
+
+/**
+ * Check whether the current session can view any close checklist task surface.
+ */
+export function hasAnyCloseTaskViewPermission(hasPermission) {
+  return Boolean(
+    typeof hasPermission === "function" &&
+      CLOSE_TASK_VIEW_PERMISSION_CODES.some((permissionCode) =>
         hasPermission(permissionCode)
       )
   );

@@ -97,28 +97,45 @@ async function main() {
       evidence_required: 1,
       evidence_count: 1,
     },
+    {
+      id: 7,
+      close_cycle_id: 10,
+      task_code: "APPROVED_FAILED_SOURCE_CHECK",
+      task_name: "Approved failed source check",
+      task_family: "FX",
+      status: "APPROVED",
+      owner_user_id: 30,
+      due_at: "2026-06-16 10:00:00",
+      required_for_cycle_lock: 1,
+      evidence_required: 0,
+      evidence_count: 0,
+      source_check_status: "FAILED",
+    },
   ];
 
   const summary = buildCloseTaskCockpitSummaryFromRows(rows, {
     userId: 20,
     now,
   });
-  assert.equal(summary.total, 6);
+  assert.equal(summary.total, 7);
   assert.equal(summary.counts.inProgress, 1);
   assert.equal(summary.counts.notStarted, 1);
+  assert.equal(summary.counts.approved, 3);
   assert.equal(summary.counts.waived, 1);
   assert.equal(summary.counts.cancelled, 1);
   assert.equal(summary.counts.overdue, 1);
   assert.equal(summary.counts.evidenceMissing, 1);
-  assert.equal(summary.counts.lockBlocking, 2);
+  assert.equal(summary.counts.sourceCheckFailed, 1);
+  assert.equal(summary.counts.lockBlocking, 3);
   assert.equal(summary.myOpenTasks.length, 2);
   assert.equal(summary.byFamily.find((row) => row.taskFamily === "CERTIFICATION").cancelled, 1);
 
   const blockers = buildCloseTaskLockBlockersFromRows(rows, { now });
-  assert.equal(blockers.length, 2);
+  assert.equal(blockers.length, 3);
   assert(blockers.every((blocker) => blocker.blockingItemType === "CLOSE_TASK_INSTANCE"));
   assert(blockers.some((blocker) => blocker.code === "CLOSE_TASK_UNRESOLVED"));
   assert(blockers.some((blocker) => blocker.code === "CLOSE_TASK_EVIDENCE_MISSING"));
+  assert(blockers.some((blocker) => blocker.code === "CLOSE_TASK_SOURCE_CHECK_FAILED"));
   assert(!blockers.some((blocker) => blocker.blockingItemId === 3));
   assert(!blockers.some((blocker) => blocker.blockingItemId === 4));
 
@@ -126,7 +143,7 @@ async function main() {
     dependencyBlockers: [],
     taskBlockers: blockers,
   });
-  assert.equal(composed.length, 2);
+  assert.equal(composed.length, 3);
 
   const alertPayloads = buildCloseTaskAlertPayloadsFromRows(rows, {
     now,
@@ -135,9 +152,18 @@ async function main() {
   assert(alertPayloads.some((row) => row.alertKey === "TASK:1:OVERDUE"));
   assert(alertPayloads.some((row) => row.alertKey === "TASK:1:BLOCKED"));
   assert(alertPayloads.some((row) => row.alertKey === "TASK:2:DUE_SOON"));
+  assert(alertPayloads.some((row) => row.alertKey === "TASK:5:BLOCKED"));
+  assert(alertPayloads.some((row) => row.alertKey === "TASK:7:SOURCE_CHECK_FAILED"));
+  assert(
+    alertPayloads.some(
+      (row) =>
+        row.alertKey === "TASK:7:SOURCE_CHECK_FAILED" &&
+        row.alertCode === "CLOSE_TASK_SOURCE_CHECK_FAILED" &&
+        row.payload?.blockingAction === "REFRESH_SOURCE_CHECK",
+    ),
+  );
   assert(!alertPayloads.some((row) => row.alertKey.startsWith("TASK:3:")));
   assert(!alertPayloads.some((row) => row.alertKey.startsWith("TASK:4:")));
-  assert(!alertPayloads.some((row) => row.alertKey.startsWith("TASK:5:")));
 
   const cycleServiceSource = readSource("src/services/close.cycles.service.js");
   assert(cycleServiceSource.includes("buildCloseTaskCockpitSummary"));

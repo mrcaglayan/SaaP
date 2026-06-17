@@ -168,6 +168,8 @@ export default function CloseCycleManagerPage() {
   const canProvisionCycles = hasPermission("close.cycle.provision");
   const canLockCycles = hasPermission("close.cycle.lock");
   const canReadCockpit = hasPermission("close.cockpit.read");
+  const canReadTasks = hasPermission("close.task.read");
+  const canReadTaskTemplates = hasPermission("close.task.template.read");
 
   const [cycles, setCycles] = useState([]);
   const [legalEntities, setLegalEntities] = useState([]);
@@ -655,6 +657,9 @@ export default function CloseCycleManagerPage() {
   const cockpitLink = selectedCycleId
     ? `/app/donem-sonu-islemler/yillik/kapanis-kokpiti?cycleId=${selectedCycleId}`
     : "/app/donem-sonu-islemler/yillik/kapanis-kokpiti";
+  const taskBoardLink = selectedCycleId
+    ? `/app/donem-sonu-islemler/yillik/kapanis-gorevleri?cycleId=${selectedCycleId}`
+    : "/app/donem-sonu-islemler/yillik/kapanis-gorevleri";
 
   return (
     <div className="space-y-6">
@@ -692,6 +697,22 @@ export default function CloseCycleManagerPage() {
               className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
             >
               {l("Open cockpit", "Kokpiti ac")}
+            </Link>
+          ) : null}
+          {canReadTasks ? (
+            <Link
+              to={taskBoardLink}
+              className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              {l("Open tasks", "Gorevleri ac")}
+            </Link>
+          ) : null}
+          {canReadTaskTemplates ? (
+            <Link
+              to="/app/donem-sonu-islemler/yillik/kapanis-gorev-sablonlari"
+              className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              {l("Task templates", "Gorev sablonlari")}
             </Link>
           ) : null}
           {canBrowseCycleHeaders ? (

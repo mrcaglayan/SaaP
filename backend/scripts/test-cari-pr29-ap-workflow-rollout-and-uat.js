@@ -270,9 +270,11 @@ async function main() {
   assert(
     seededDefinition.code === DEFAULT_AP_WORKFLOW_DEFINITION_CODE &&
       seededDefinition.created === true &&
-      seededDefinition.stepScopeTypes.length === 1 &&
-      seededDefinition.stepScopeTypes[0] === "COUNTRY",
-    "Default AP workflow seed should create the expected country-scoped definition"
+      seededDefinition.stepScopeTypes.length === 3 &&
+      seededDefinition.stepScopeTypes[0] === "OPERATING_UNIT" &&
+      seededDefinition.stepScopeTypes[1] === "COUNTRY" &&
+      seededDefinition.stepScopeTypes[2] === "COUNTRY",
+    "Default AP workflow seed should create the expected branch submit and country approval/post chain"
   );
   const reseededDefinition = await ensureDefaultApWorkflowDefinition({
     tenantId,
@@ -297,16 +299,26 @@ async function main() {
     "Tenant should keep exactly one default AP workflow definition row"
   );
   const stepRows = await query(
-    `SELECT stage_scope_type, required_permission_code
+    `SELECT action_code, stage_scope_type, required_permission_code
      FROM workflow_definition_steps
-     WHERE workflow_definition_id = ?`,
+     WHERE workflow_definition_id = ?
+     ORDER BY step_no ASC`,
     [seededDefinition.definitionId]
   );
   assert(
-    (stepRows.rows || []).length === 1 &&
-      String(stepRows.rows[0]?.stage_scope_type || "").toUpperCase() === "COUNTRY" &&
-      stepRows.rows[0]?.required_permission_code === null,
-    "Default AP workflow seed should keep one COUNTRY step with null permission code"
+    (stepRows.rows || []).length === 3 &&
+      String(stepRows.rows[0]?.action_code || "").toUpperCase() === "SUBMIT" &&
+      String(stepRows.rows[0]?.stage_scope_type || "").toUpperCase() ===
+        "OPERATING_UNIT" &&
+      String(stepRows.rows[0]?.required_permission_code || "") === "cari.doc.submit" &&
+      String(stepRows.rows[1]?.action_code || "").toUpperCase() === "APPROVE" &&
+      String(stepRows.rows[1]?.stage_scope_type || "").toUpperCase() === "COUNTRY" &&
+      String(stepRows.rows[1]?.required_permission_code || "") ===
+        "approvals.requests.approve" &&
+      String(stepRows.rows[2]?.action_code || "").toUpperCase() === "POST" &&
+      String(stepRows.rows[2]?.stage_scope_type || "").toUpperCase() === "COUNTRY" &&
+      String(stepRows.rows[2]?.required_permission_code || "") === "cari.doc.post",
+    "Default AP workflow seed should keep the explicit branch AP action chain"
   );
   assert(
     (await countAssignments(tenantId, "AP_DOCUMENT_POSTING")) === 0,

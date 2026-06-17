@@ -1,173 +1,149 @@
-Checked `project4.zip`. Overall verdict: **PR-CTM-04 is mostly implemented correctly and the earlier PR-CTM-03 cycle-status blocker is fixed.** The materialization architecture is in place. But I found **two plan-alignment issues** you should fix or explicitly accept before moving to PR-CTM-05. The final plan requires deterministic template materialization, tenant override suppression, default shipped templates, PLANNED-cycle provisioning, and idempotent reprovisioning.
+Checked `project5.zip`. Overall: **PR-CTM-01 through PR-CTM-05 are mostly okay**, and the implementation is still aligned with the final plan’s architecture: task layer on top of close cycles, not a second close engine.
 
 ## Verdict
 
 ```txt
 PR-CTM-01: OK
 PR-CTM-02: OK
-PR-CTM-03: OK after previous cycle_status fix
-PR-CTM-04: Mostly OK, but fix/decide 2 items before PR-CTM-05
+PR-CTM-03: OK
+PR-CTM-04: OK, previous issues fixed
+PR-CTM-05: Mostly OK, but fix 2 items before PR-CTM-06
 ```
 
-## What looks good
+## Good confirmations
 
-The following PR-CTM-04 pieces are implemented:
+The previous PR-CTM-03 cycle-status bug is fixed. `assertCloseTaskCycleEditable()` now checks `cycle_status` / `cycleStatus` before falling back to `status`, so task status is no longer confused with close-cycle status.
+
+The previous PR-CTM-04 issues are also fixed:
 
 ```txt
-backend/src/services/close.task-templates.service.js
+AP_UNPOSTED_CLEARED      SYSTEM_CHECK
+AR_AGING_REVIEWED        MANUAL
+PAYROLL_POSTED           SOURCE_STATUS
+FX_RATES_ENTERED         SYSTEM_CHECK
+DEPRECIATION_POSTED      SOURCE_STATUS
+TRIAL_BALANCE_REVIEWED   MANUAL
+```
+
+`LOCAL_CLOSE_PACK_REVIEWER` is now backed by a real local close pack reviewer lookup instead of always falling back to cycle owner.
+
+PR-CTM-05 files are present:
+
+```txt
+backend/src/services/close.alerts-persistence.service.js
+backend/src/services/close.blocker-composer.service.js
 backend/src/services/close.tasks.service.js
-backend/scripts/backfill-close-task-defaults.js
-backend/scripts/test-close-task-materialization.js
-```
-
-The default template catalog exists, including:
-
-```txt
-BANK_RECON_COMPLETED
-CASH_RECON_COMPLETED
-INVENTORY_NEGATIVE_STOCK_CHECK
-AP_UNPOSTED_CLEARED
-AR_AGING_REVIEWED
-PAYROLL_POSTED
-IC_133_333_MATCHED
-FX_RATES_ENTERED
-DEPRECIATION_POSTED
-TRIAL_BALANCE_REVIEWED
-ENTITY_CLOSE_CERTIFIED
-```
-
-Materialization is connected into:
-
-```txt
 backend/src/services/close.cycles.service.js
+backend/scripts/test-close-task-prctm05-cockpit-alerts.js
 ```
 
-for both:
+And the main PR-CTM-05 behavior is implemented:
 
 ```txt
-initial provisioning
-open-cycle reprovisioning
+task cockpit summary
+task counts
+cancelled count
+sourceCheckFailed count
+myOpenTasks
+byFamily
+lockBlocking count
+standard CLOSE_TASK_INSTANCE blockers
+task blockers merged into close blockers
+durable task alerts
+alert upsert
+alert stale-resolution
+task-alert resolution on terminal statuses
+cockpit integration
+lockCycle integration
+manager list lock-readiness integration
 ```
 
-The earlier PR-CTM-03 bug is fixed. `assertCloseTaskCycleEditable()` now correctly checks:
+## Fix 1 — PR-CTM-05 test has a wrong expectation
+
+In `test-close-task-prctm05-cockpit-alerts.js`, task `id = 5` is:
+
+```txt
+status = APPROVED
+required_for_cycle_lock = 1
+evidence_required = 1
+evidence_count = 0
+```
+
+According to the plan and implementation, this **should block lock** because approved evidence-required tasks still need active evidence.
+
+The implementation correctly creates a lock blocker for it.
+
+But the test currently says:
 
 ```js
-cycle_status ?? cycleStatus ?? status;
+assert(!alertPayloads.some((row) => row.alertKey.startsWith("TASK:5:")));
 ```
 
-so task lifecycle actions no longer confuse task status with close-cycle status.
-
-Also good: `m206_evidence_comments_nullable_legal_entity_scope.js` is present. That completes the generic evidence/comment scope path better than the original plan, because country/group task evidence/comments can now work without forcing `legal_entity_id`.
-
-## Issue 1 — Default template `completion_mode` does not match the final plan
-
-The plan says several templates should be `SYSTEM_CHECK`, `SOURCE_STATUS`, or `MANUAL`.
-
-But the implementation currently makes most of them `HYBRID_REVIEW`.
-
-### Mismatches
-
-| Template                 |            Plan |    Current code |
-| ------------------------ | --------------: | --------------: |
-| `AP_UNPOSTED_CLEARED`    |  `SYSTEM_CHECK` | `HYBRID_REVIEW` |
-| `AR_AGING_REVIEWED`      |        `MANUAL` | `HYBRID_REVIEW` |
-| `PAYROLL_POSTED`         | `SOURCE_STATUS` | `HYBRID_REVIEW` |
-| `FX_RATES_ENTERED`       |  `SYSTEM_CHECK` | `HYBRID_REVIEW` |
-| `DEPRECIATION_POSTED`    | `SOURCE_STATUS` | `HYBRID_REVIEW` |
-| `TRIAL_BALANCE_REVIEWED` |        `MANUAL` | `HYBRID_REVIEW` |
-
-This is not a database-breaking issue, but it is a **plan mismatch**.
-
-### My recommendation
-
-Fix the code to match the plan:
-
-```txt
-AP_UNPOSTED_CLEARED              SYSTEM_CHECK
-AR_AGING_REVIEWED                MANUAL
-PAYROLL_POSTED                   SOURCE_STATUS
-FX_RATES_ENTERED                 SYSTEM_CHECK
-DEPRECIATION_POSTED              SOURCE_STATUS
-TRIAL_BALANCE_REVIEWED           MANUAL
-```
-
-Then add assertions to:
-
-```txt
-backend/scripts/test-close-task-materialization.js
-```
-
-so this does not drift again.
-
-If you intentionally changed them all to `HYBRID_REVIEW`, then update the plan and test accordingly. Do not leave code and plan inconsistent.
-
-## Issue 2 — `LOCAL_CLOSE_PACK_REVIEWER` strategy is not really implemented yet
-
-The plan supports:
-
-```txt
-default_reviewer_strategy = LOCAL_CLOSE_PACK_REVIEWER
-```
-
-But the implementation currently resolves that to the cycle owner:
+That expectation is wrong. It should expect:
 
 ```js
-if (normalized === "LOCAL_CLOSE_PACK_REVIEWER") {
-  return readPositiveInt(cycle, "owner_user_id", "ownerUserId");
-}
+assert(alertPayloads.some((row) => row.alertKey === "TASK:5:BLOCKED"));
 ```
 
-That means if a template later uses `LOCAL_CLOSE_PACK_REVIEWER`, it will not actually assign the local close pack reviewer.
+Otherwise, once dependencies are installed and the test can run, this test will fail.
 
-This is not breaking current defaults, because the default shipped templates mostly use `CYCLE_OWNER` as reviewer. But it will become a problem when template admin is exposed.
+## Fix 2 — source-check failures are counted but not alert/blocker-aware yet
 
-### Fix
-
-Either:
-
-1. Load `reviewer_user_id` from `local_close_packs` when the cycle item is linked to a local close pack, or
-2. Do not expose `LOCAL_CLOSE_PACK_REVIEWER` in template admin until it is really wired.
-
-Better fix:
+`buildCloseTaskCockpitSummaryFromRows()` correctly counts:
 
 ```txt
-When item.currentSourceTargetType = LOCAL_CLOSE_PACK
-and item.currentSourceTargetId is present,
-load local_close_packs.reviewer_user_id
-and use it for LOCAL_CLOSE_PACK_REVIEWER.
+sourceCheckFailed
 ```
 
-## Operational note — default templates require backfill
-
-The default templates are not inserted by the migration itself. They are inserted through:
-
-```bash
-npm run backfill:close-task-defaults
-```
-
-That is okay, but make sure this is included in your rollout order.
-
-Otherwise, provisioning will work technically, but it will create:
+for statuses like:
 
 ```txt
-activeTemplateCount = 0
-plannedTaskCount = 0
-createdTaskCount = 0
+FAILED
+ERROR
+BLOCKED
 ```
 
-because no template rows exist yet.
+But `buildCloseTaskLockBlockersFromRows()` and `buildCloseTaskAlertPayloadsFromRows()` do not yet create a specific blocker/alert for failed source checks.
 
-## Tests
+The plan says failed source checks should make task blockers and durable alerts explain the failed check instead of making users guess from JSON.
 
-I could not fully run the Node tests from the zip because dependencies are not installed in the extracted project. The failure was:
+Add this behavior:
+
+```txt
+If task is not terminal
+and source_check_status is FAILED / ERROR / BLOCKED
+then cockpit should expose a clear source-check failed state.
+```
+
+For durable alert:
+
+```txt
+alertKey: TASK:<taskId>:SOURCE_CHECK_FAILED
+alertCode: CLOSE_TASK_SOURCE_CHECK_FAILED
+alertType: BLOCKED
+severity: HIGH
+blockingAction: REFRESH_SOURCE_CHECK or RESOLVE_SOURCE_CHECK
+```
+
+For lock blockers:
+
+```txt
+If required_for_cycle_lock = true
+and source_check_status is FAILED / ERROR / BLOCKED
+then block cycle lock even if the task status is APPROVED.
+```
+
+This matters especially for future `SYSTEM_CHECK`, `SOURCE_STATUS`, and `HYBRID_REVIEW` tasks.
+
+## Test status
+
+Syntax checks passed for the new PR-CTM-05 files.
+
+I could not run the full backend test command because the uploaded zip does not include installed dependencies. The failure was:
 
 ```txt
 Cannot find package 'mysql2'
 ```
-
-That is expected for a raw uploaded zip without `node_modules`.
-
-Static syntax checks passed for the relevant PR-CTM-04 files.
 
 After installing dependencies, run:
 
@@ -179,21 +155,18 @@ npm run test:close-tasks:scope
 npm run test:close-tasks:sod
 npm run test:close-tasks:prctm03
 npm run test:close-tasks:materialization
-```
-
-Also run the backfill before testing real provisioning:
-
-```bash
-npm run backfill:close-task-defaults
+npm run test:close-tasks:prctm05
 ```
 
 ## Final assessment
 
-You can continue after handling these two items:
+You are in good shape.
+
+Before moving to PR-CTM-06, I would patch only these:
 
 ```txt
-1. Align default template completion_mode values with the final plan, or update the plan intentionally.
-2. Wire LOCAL_CLOSE_PACK_REVIEWER correctly, or hide it until wired.
+1. Fix the PR-CTM-05 test expectation for APPROVED + missing required evidence.
+2. Add explicit source-check failed blocker / durable alert handling.
 ```
 
-Other than those, PR-CTM-04 is structurally good. The implementation still respects the main architecture rule: **close tasks are being materialized on top of close cycles and close-cycle items, not replacing the existing close engine.**
+After those two fixes, PR-CTM-05 is acceptable.

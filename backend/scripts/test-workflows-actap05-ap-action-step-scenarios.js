@@ -942,7 +942,7 @@ async function main() {
         slug: "invalid-draft-submit-no-approve",
         steps: [
           makeApStep(1, "DRAFT", "OPERATING_UNIT"),
-          makeApStep(2, "SUBMIT", "LEGAL_ENTITY"),
+          makeApStep(2, "SUBMIT", "OPERATING_UNIT"),
           makeApStep(3, "POST", "COUNTRY"),
         ],
       }),
@@ -956,14 +956,14 @@ async function main() {
     slug: "draft-submit-approve-post",
     steps: [
       makeApStep(1, "DRAFT", "OPERATING_UNIT"),
-      makeApStep(2, "SUBMIT", "LEGAL_ENTITY"),
+      makeApStep(2, "SUBMIT", "OPERATING_UNIT"),
       makeApStep(3, "APPROVE", "COUNTRY"),
       makeApStep(4, "POST", "COUNTRY"),
     ],
     creator: primaryOuActor,
     draftDeniedActor: siblingOuActor,
-    submitAllowedActor: legalEntityActor,
-    submitDeniedActor: primaryOuActor,
+    submitAllowedActor: primaryOuActor,
+    submitDeniedActor: siblingOuActor,
     approveStages: [
       {
         expectedStepNo: 3,

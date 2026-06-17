@@ -94,10 +94,16 @@ function getBusinessStatusTone(status) {
       return "border-cyan-200 bg-cyan-50 text-cyan-700";
     case "READY_FOR_REVIEW":
       return "border-violet-200 bg-violet-50 text-violet-700";
+    case "SUBMITTED":
+      return "border-cyan-200 bg-cyan-50 text-cyan-700";
+    case "WAIVED":
+      return "border-violet-200 bg-violet-50 text-violet-700";
     case "FAILED":
     case "RETURNED":
     case "REOPENED":
       return "border-rose-200 bg-rose-50 text-rose-700";
+    case "CANCELLED":
+      return "border-slate-300 bg-slate-100 text-slate-700";
     case "IN_PROGRESS":
     case "OPEN":
     case "DRAFT":
@@ -119,10 +125,16 @@ function getBusinessStatusLabel(status, l) {
       return l("In progress", "Devam ediyor");
     case "READY_FOR_REVIEW":
       return l("Ready for review", "Incelemeye hazir");
+    case "SUBMITTED":
+      return l("Submitted", "Gonderildi");
     case "RETURNED":
       return l("Returned", "Iade edildi");
     case "APPROVED":
       return l("Approved", "Onaylandi");
+    case "WAIVED":
+      return l("Waived", "Feragat edildi");
+    case "CANCELLED":
+      return l("Cancelled", "Iptal edildi");
     case "COMPLETED":
       return l("Completed", "Tamamlandi");
     case "LOCKED":
@@ -1363,6 +1375,179 @@ function AlertList({ alertSnapshot = null, l }) {
   );
 }
 
+function buildTaskBoardPath(cycleId, taskId = null) {
+  const params = new URLSearchParams();
+  if (cycleId) {
+    params.set("cycleId", String(cycleId));
+  }
+  if (taskId) {
+    params.set("taskId", String(taskId));
+  }
+  const query = params.toString();
+  return `/app/donem-sonu-islemler/yillik/kapanis-gorevleri${query ? `?${query}` : ""}`;
+}
+
+function TaskMiniList({ rows = [], emptyText, cycleId, l }) {
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return (
+      <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-500">
+        {emptyText}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      {rows.slice(0, 5).map((row) => (
+        <Link
+          key={row.id}
+          to={row.drillPath || buildTaskBoardPath(cycleId, row.id)}
+          className="block rounded-2xl border border-slate-200 bg-white p-3 transition hover:border-cyan-300 hover:bg-cyan-50"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="truncate text-sm font-semibold text-slate-900">
+                {row.taskName || row.taskCode || "-"}
+              </div>
+              <div className="mt-1 text-xs text-slate-500">
+                {row.taskFamily || "MANUAL"} / {row.ownerUserId ? `#${row.ownerUserId}` : "-"}
+              </div>
+            </div>
+            {renderStatusPill(
+              getBusinessStatusLabel(row.status, l),
+              getBusinessStatusTone(row.status),
+            )}
+          </div>
+          <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
+            {row.dueAt ? <span>{formatDateTime(row.dueAt)}</span> : null}
+            {row.evidenceMissing ? <span>{l("Evidence missing", "Kanit eksik")}</span> : null}
+            {row.sourceCheckFailed ? (
+              <span>{l("Source check failed", "Kaynak kontrolu basarisiz")}</span>
+            ) : null}
+          </div>
+        </Link>
+      ))}
+    </div>
+  );
+}
+
+function TaskCockpitPanel({ taskSnapshot = null, cycleId, l }) {
+  const counts = taskSnapshot?.counts || {};
+  const rows = Array.isArray(taskSnapshot?.rows) ? taskSnapshot.rows : [];
+  const byFamily = Array.isArray(taskSnapshot?.byFamily) ? taskSnapshot.byFamily : [];
+  const lockBlockingRows = rows.filter((row) => Boolean(row.lockBlocking));
+  const overdueRows = rows.filter((row) => Boolean(row.overdue));
+  const myOpenTasks = Array.isArray(taskSnapshot?.myOpenTasks)
+    ? taskSnapshot.myOpenTasks
+    : [];
+
+  return (
+    <div className="space-y-5">
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+        <MetricCard
+          label={l("Checklist tasks", "Kontrol gorevleri")}
+          value={taskSnapshot?.total || 0}
+          hint={`${counts.approved || 0} ${l("approved", "onayli")}`}
+        />
+        <MetricCard
+          label={l("Submitted", "Gonderildi")}
+          value={counts.submitted || 0}
+          hint={l("Waiting for review", "Inceleme bekliyor")}
+        />
+        <MetricCard
+          label={l("Overdue", "Geciken")}
+          value={counts.overdue || 0}
+          hint={l("Open tasks past due", "Vadesi gecen acik gorevler")}
+        />
+        <MetricCard
+          label={l("Evidence missing", "Kanit eksik")}
+          value={counts.evidenceMissing || 0}
+          hint={l("Evidence-required tasks", "Kanit gerektiren gorevler")}
+        />
+        <MetricCard
+          label={l("Lock blockers", "Kilit blokajlari")}
+          value={counts.lockBlocking || 0}
+          hint={l("Required task gates", "Zorunlu gorev gecitleri")}
+        />
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-3">
+        <div>
+          <div className="mb-2 text-sm font-semibold text-slate-900">
+            {l("Lock-blocking tasks", "Kilidi bloke eden gorevler")}
+          </div>
+          <TaskMiniList
+            rows={lockBlockingRows}
+            cycleId={cycleId}
+            l={l}
+            emptyText={l("No lock-blocking tasks.", "Kilidi bloke eden gorev yok.")}
+          />
+        </div>
+        <div>
+          <div className="mb-2 text-sm font-semibold text-slate-900">
+            {l("Overdue tasks", "Geciken gorevler")}
+          </div>
+          <TaskMiniList
+            rows={overdueRows}
+            cycleId={cycleId}
+            l={l}
+            emptyText={l("No overdue tasks.", "Geciken gorev yok.")}
+          />
+        </div>
+        <div>
+          <div className="mb-2 text-sm font-semibold text-slate-900">
+            {l("My open tasks", "Acik gorevlerim")}
+          </div>
+          <TaskMiniList
+            rows={myOpenTasks}
+            cycleId={cycleId}
+            l={l}
+            emptyText={l("No open tasks assigned to you.", "Size atanmis acik gorev yok.")}
+          />
+        </div>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="min-w-full text-sm">
+          <thead>
+            <tr className="border-b border-slate-200 text-left text-slate-500">
+              <th className="pb-3 pr-4 font-semibold">{l("Family", "Aile")}</th>
+              <th className="pb-3 pr-4 font-semibold">{l("Total", "Toplam")}</th>
+              <th className="pb-3 pr-4 font-semibold">{l("Open", "Acik")}</th>
+              <th className="pb-3 pr-4 font-semibold">{l("Approved", "Onayli")}</th>
+              <th className="pb-3 pr-4 font-semibold">{l("Waived", "Feragat")}</th>
+              <th className="pb-3 pr-4 font-semibold">{l("Cancelled", "Iptal")}</th>
+              <th className="pb-3 pr-4 font-semibold">{l("Overdue", "Geciken")}</th>
+              <th className="pb-3 font-semibold">{l("Lock blockers", "Kilit blokajlari")}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {byFamily.map((row) => (
+              <tr key={row.taskFamily} className="border-b border-slate-100">
+                <td className="py-3 pr-4 font-medium text-slate-900">{row.taskFamily || "MANUAL"}</td>
+                <td className="py-3 pr-4 text-slate-700">{row.total || 0}</td>
+                <td className="py-3 pr-4 text-slate-700">{row.open || 0}</td>
+                <td className="py-3 pr-4 text-slate-700">{row.approved || 0}</td>
+                <td className="py-3 pr-4 text-slate-700">{row.waived || 0}</td>
+                <td className="py-3 pr-4 text-slate-700">{row.cancelled || 0}</td>
+                <td className="py-3 pr-4 text-slate-700">{row.overdue || 0}</td>
+                <td className="py-3 text-slate-700">{row.lockBlocking || 0}</td>
+              </tr>
+            ))}
+            {byFamily.length === 0 ? (
+              <tr>
+                <td colSpan={8} className="py-6 text-center text-sm text-slate-500">
+                  {l("No task families are visible.", "Gorunur gorev ailesi yok.")}
+                </td>
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function StaleList({ staleSnapshot = null, l }) {
   const rows = Array.isArray(staleSnapshot?.rows) ? staleSnapshot.rows : [];
   if (!rows.length) {
@@ -1863,6 +2048,23 @@ export default function CloseCockpitPage() {
                   </div>
                 </div>
                 <AlertList alertSnapshot={cockpit?.alerts} l={l} />
+              </section>
+
+              <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                <div className="mb-4 flex flex-wrap items-start justify-between gap-4">
+                  <div>
+                    <h3 className="text-lg font-semibold text-slate-900">
+                      {l("Close checklist tasks", "Kapanis kontrol gorevleri")}
+                    </h3>
+                  </div>
+                  <Link
+                    to={buildTaskBoardPath(selectedCycleId)}
+                    className="inline-flex rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:border-cyan-300 hover:text-cyan-800"
+                  >
+                    {l("Open task board", "Gorev panosunu ac")}
+                  </Link>
+                </div>
+                <TaskCockpitPanel taskSnapshot={cockpit?.tasks} cycleId={selectedCycleId} l={l} />
               </section>
 
               <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">

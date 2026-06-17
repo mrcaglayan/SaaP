@@ -1029,7 +1029,8 @@ function mapCloseTaskCockpitRow(row = {}, now = new Date()) {
     .trim()
     .toUpperCase();
   const sourceCheckFailed =
-    !isTerminal && TASK_SOURCE_CHECK_FAILED_STATUSES.has(sourceCheckStatus);
+    !["WAIVED", "CANCELLED"].includes(status) &&
+    TASK_SOURCE_CHECK_FAILED_STATUSES.has(sourceCheckStatus);
   const overdue =
     !isTerminal &&
     dueTimestamp !== null &&
@@ -1081,6 +1082,9 @@ function isCloseTaskLockBlocking(row = {}) {
   if (["WAIVED", "CANCELLED"].includes(row.status)) {
     return false;
   }
+  if (row.sourceCheckFailed) {
+    return true;
+  }
   if (row.status !== "APPROVED") {
     return true;
   }
@@ -1090,16 +1094,27 @@ function isCloseTaskLockBlocking(row = {}) {
 }
 
 function buildCloseTaskLockBlocker(row = {}) {
+  const sourceCheckFailed = Boolean(row.sourceCheckFailed);
   const evidenceOnly = row.status === "APPROVED" && row.evidenceMissing;
   return {
-    code: evidenceOnly ? "CLOSE_TASK_EVIDENCE_MISSING" : "CLOSE_TASK_UNRESOLVED",
-    message: evidenceOnly
-      ? `${row.taskName || row.taskCode || "Close task"} requires active evidence before cycle lock.`
-      : `${row.taskName || row.taskCode || "Close task"} must be resolved before cycle lock.`,
-    severity: evidenceOnly || row.overdue ? "HIGH" : "MEDIUM",
+    code: sourceCheckFailed
+      ? "CLOSE_TASK_SOURCE_CHECK_FAILED"
+      : evidenceOnly
+        ? "CLOSE_TASK_EVIDENCE_MISSING"
+        : "CLOSE_TASK_UNRESOLVED",
+    message: sourceCheckFailed
+      ? `${row.taskName || row.taskCode || "Close task"} has a failed source check before cycle lock.`
+      : evidenceOnly
+        ? `${row.taskName || row.taskCode || "Close task"} requires active evidence before cycle lock.`
+        : `${row.taskName || row.taskCode || "Close task"} must be resolved before cycle lock.`,
+    severity: sourceCheckFailed || evidenceOnly || row.overdue ? "HIGH" : "MEDIUM",
     blockingItemType: "CLOSE_TASK_INSTANCE",
     blockingItemId: parsePositiveInt(row.id),
-    blockingAction: evidenceOnly ? "ATTACH_EVIDENCE" : "RESOLVE_TASK",
+    blockingAction: sourceCheckFailed
+      ? "REFRESH_SOURCE_CHECK"
+      : evidenceOnly
+        ? "ATTACH_EVIDENCE"
+        : "RESOLVE_TASK",
     owner: row.ownerUserId ? { userId: row.ownerUserId } : null,
     dueDate: row.dueAt || null,
     firstBlockedAt: null,
@@ -1110,6 +1125,7 @@ function buildCloseTaskLockBlocker(row = {}) {
       status: row.status || null,
       evidenceRequired: Boolean(row.evidenceRequired),
       evidenceCount: Number(row.evidenceCount || 0),
+      sourceCheckStatus: row.sourceCheckStatus || null,
     },
   };
 }

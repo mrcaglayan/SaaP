@@ -478,6 +478,10 @@ export const messages = {
           "Kapanis Kokpiti",
         "/app/donem-sonu-islemler/yillik/kapanis-donguleri":
           "Kapanis Donguleri",
+        "/app/donem-sonu-islemler/yillik/kapanis-gorevleri":
+          "Kapanis Gorevleri",
+        "/app/donem-sonu-islemler/yillik/kapanis-gorev-sablonlari":
+          "Kapanis Gorev Sablonlari",
         "/app/donem-sonu-islemler/yillik/kapanis-islemleri":
           "Kapanis Islemleri",
         "/app/donem-sonu-islemler/yillik/yerel-kapanis-paketleri":
@@ -2939,6 +2943,10 @@ export const messages = {
           "Close Cockpit",
         "/app/donem-sonu-islemler/yillik/kapanis-donguleri":
           "Close Cycles",
+        "/app/donem-sonu-islemler/yillik/kapanis-gorevleri":
+          "Close Checklist Tasks",
+        "/app/donem-sonu-islemler/yillik/kapanis-gorev-sablonlari":
+          "Close Task Templates",
         "/app/donem-sonu-islemler/yillik/kapanis-islemleri":
           "Closing Transactions",
         "/app/donem-sonu-islemler/yillik/yerel-kapanis-paketleri":

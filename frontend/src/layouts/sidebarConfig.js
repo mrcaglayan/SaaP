@@ -638,6 +638,18 @@ const CLOSE_CYCLE_MANAGER_PAGE_PERMISSIONS = [
   "close.cycle.provision",
   "close.cycle.lock",
 ];
+const CLOSE_TASK_BOARD_PAGE_PERMISSIONS = [
+  "close.task.read",
+  "close.task.create",
+  "close.task.work",
+  "close.task.review",
+  "close.task.waive",
+  "close.task.admin",
+];
+const CLOSE_TASK_TEMPLATE_PAGE_PERMISSIONS = [
+  "close.task.template.read",
+  "close.task.template.write",
+];
 const FX_RATE_PAGE_PERMISSIONS = ["fx.rate.read", "fx.rate.bulk_upsert"];
 const TAX_SETUP_PAGE_PERMISSIONS = [
   "org.tree.read",
@@ -1136,6 +1148,18 @@ export const sidebarItems = [
             label: "Kapanis Donguleri",
             to: "/app/donem-sonu-islemler/yillik/kapanis-donguleri",
             requiredPermissions: CLOSE_CYCLE_MANAGER_PAGE_PERMISSIONS,
+            implemented: true,
+          },
+          {
+            label: "Kapanis Gorevleri",
+            to: "/app/donem-sonu-islemler/yillik/kapanis-gorevleri",
+            requiredPermissions: CLOSE_TASK_BOARD_PAGE_PERMISSIONS,
+            implemented: true,
+          },
+          {
+            label: "Kapanis Gorev Sablonlari",
+            to: "/app/donem-sonu-islemler/yillik/kapanis-gorev-sablonlari",
+            requiredPermissions: CLOSE_TASK_TEMPLATE_PAGE_PERMISSIONS,
             implemented: true,
           },
           {
