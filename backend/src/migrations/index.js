@@ -191,6 +191,7 @@ import migration202DropWorkflowDefinitionStepsRequiredPackageCode from "./m202_d
 import migration203CloseTaskManagementFoundation from "./m203_close_task_management_foundation.js";
 import migration204EvidenceCommentsGenericScopeForCloseTasks from "./m204_evidence_comments_generic_scope_for_close_tasks.js";
 import migration205CloseAlertsGenericSubject from "./m205_close_alerts_generic_subject.js";
+import migration206EvidenceCommentsNullableLegalEntityScope from "./m206_evidence_comments_nullable_legal_entity_scope.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -386,6 +387,7 @@ const migrations = [
   migration203CloseTaskManagementFoundation,
   migration204EvidenceCommentsGenericScopeForCloseTasks,
   migration205CloseAlertsGenericSubject,
+  migration206EvidenceCommentsNullableLegalEntityScope,
 ];
 
 export default migrations;

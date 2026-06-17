@@ -12,9 +12,6 @@ import { getWorkflowStepAllowedScopeTypes } from "../../../../shared/workflowSte
 function freezeList(values) {
   return Object.freeze(values);
 }
-function freezeStep(step) {
-  return Object.freeze(step);
-}
 function freezeAuthority(authority) {
   return Object.freeze({
     ...authority,
@@ -905,16 +902,7 @@ function getCategoryLabel(modelType, category) {
   }
   return normalizedCategory === "unclassified" ? "Unclassified" : normalizedCategory;
 }
-function sortCatalogEntries(left, right) {
-  const leftOrder = Number(left?.sortOrder || 9999);
-  const rightOrder = Number(right?.sortOrder || 9999);
-  if (leftOrder !== rightOrder) {
-    return leftOrder - rightOrder;
-  }
-  return normalizeText(left?.displayName || left?.code).localeCompare(
-    normalizeText(right?.displayName || right?.code)
-  );
-}
+
 function buildMetadataEntry({
   modelType,
   code,
@@ -941,38 +929,7 @@ function buildMetadataEntry({
     sortOrder: Number(sortOrder || 9999),
   };
 }
-function findWorkflowAuthorityDefinitionForPermission(workflowFamily, permissionCode) {
-  const normalizedWorkflowFamily = normalizeText(workflowFamily).toUpperCase();
-  const normalizedPermissionCode = normalizeText(permissionCode).toLowerCase();
-  if (!normalizedPermissionCode) {
-    return null;
-  }
-  const definitions =
-    WORKFLOW_AUTHORITY_CATALOG[normalizedWorkflowFamily] ||
-    WORKFLOW_AUTHORITY_CATALOG.CROSS_WORKFLOW ||
-    [];
-  return (
-    definitions.find((authority) => {
-      const permissionCodes = [
-        ...cloneList(authority?.requiredPermissionCodes),
-        ...cloneList(authority?.anyPermissionCodes),
-      ].map((value) => normalizeText(value).toLowerCase());
-      return permissionCodes.includes(normalizedPermissionCode);
-    }) || null
-  );
-}
 
-function getWorkflowAuthorityCode(workflowFamily, permissionCode) {
-  return findWorkflowAuthorityDefinitionForPermission(workflowFamily, permissionCode)?.code || "";
-}
-
-function getWorkflowAuthorityDisplayName(workflowFamily, permissionCode) {
-  const authorityDefinition = findWorkflowAuthorityDefinitionForPermission(
-    workflowFamily,
-    permissionCode
-  );
-  return authorityDefinition?.displayName || normalizeText(permissionCode);
-}
 
 /**
  * Returns the display label for one access-model item type.
@@ -1003,7 +960,7 @@ export function listWorkflowAuthorityDefinitions(workflowFamily) {
   const normalizedWorkflowFamily = normalizeText(workflowFamily).toUpperCase();
   return cloneList(
     WORKFLOW_AUTHORITY_CATALOG[normalizedWorkflowFamily] ||
-      WORKFLOW_AUTHORITY_CATALOG.CROSS_WORKFLOW
+    WORKFLOW_AUTHORITY_CATALOG.CROSS_WORKFLOW
   ).map((authority) => ({
     ...authority,
     requiredPermissionCodes: cloneList(authority?.requiredPermissionCodes),

@@ -30,6 +30,8 @@
     "test:permission-matrix": "node scripts/test-permission-matrix.js",
     "test:close-tasks:scope": "node scripts/test-close-task-scope-access.js",
     "test:close-tasks:sod": "node scripts/test-close-task-sod-rules.js",
+    "test:close-tasks:source-refs": "node scripts/test-close-task-source-ref-registry.js",
+    "test:close-tasks:generic-scope-backfill": "node scripts/test-close-task-generic-scope-backfill.js",
     "test:cash-pr06": "node scripts/test-cash-pr06-register-session.js",
     "test:cash-pr07": "node scripts/test-cash-pr07-lifecycle.js",
     "test:cash-pr08": "node scripts/test-cash-pr08-gl-posting.js",

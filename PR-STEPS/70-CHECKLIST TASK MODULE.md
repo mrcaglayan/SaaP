@@ -184,6 +184,8 @@ implementation.
 - `backend/src/migrations/m204_evidence_comments_generic_scope_for_close_tasks.js`
 - `backend/src/migrations/m205_close_alerts_generic_subject.js`
   for durable task alerts
+- `backend/src/migrations/m206_evidence_comments_nullable_legal_entity_scope.js`
+  for Option A generic country/group evidence and comments
 
 ### Tables
 
@@ -463,17 +465,16 @@ Central audit log rule:
 
 ### Evidence scope compatibility
 
-Existing `evidence_objects` requires `legal_entity_id`. That is fine for
-legal-entity and operating-unit tasks, but not enough for true country/group
+Existing `evidence_objects` originally requires `legal_entity_id`. That is fine
+for legal-entity and operating-unit tasks, but not enough for true country/group
 tasks.
 
-Migration `m204` must extend `evidence_objects` with generic scope columns:
+Migration `m204` is generic-scope phase 1. It must extend `evidence_objects`
+with generic scope columns while preserving legacy legal-entity route behavior:
 
 - `scope_type`
 - `scope_id`
 - `scope_key`
-- make `legal_entity_id` nullable only after compatibility tests protect
-  existing legal-entity evidence routes
 - add a new scoped evidence lookup index
 - keep existing legal-entity evidence routes working unchanged
 - backfill existing rows:
@@ -481,12 +482,23 @@ Migration `m204` must extend `evidence_objects` with generic scope columns:
   - `scope_id = legal_entity_id`
   - `scope_key = CONCAT('LEGAL_ENTITY:', legal_entity_id)`
 
+Migration `m206` completes Option A after the generic-scope backfill:
+
+- make `evidence_objects.legal_entity_id` nullable
+- preserve the tenant/legal-entity foreign key for rows that still carry a
+  legal entity
+- keep existing legal-entity evidence routes filtering through
+  `legal_entity_id`
+- allow task evidence for country/group scopes through `scope_type`,
+  `scope_id`, and `scope_key` with `legal_entity_id = NULL`
+
 ### Comment scope compatibility
 
 Existing `internal_comments` also follows a legal-entity scoped pattern. Task
 comments need the same generic-scope compatibility decision as evidence.
 
-Migration `m204` must also extend `internal_comments` with:
+Migration `m204` must also extend `internal_comments` with generic-scope phase
+1 columns:
 
 - `scope_type`
 - `scope_id`
@@ -495,9 +507,14 @@ Migration `m204` must also extend `internal_comments` with:
   - `scope_type = 'LEGAL_ENTITY'`
   - `scope_id = legal_entity_id`
   - `scope_key = CONCAT('LEGAL_ENTITY:', legal_entity_id)`
-- make `legal_entity_id` nullable only after existing legal-entity comment
-  routes are protected by compatibility tests
 - use `source_ref_type = 'CLOSE_TASK_INSTANCE'`
+
+Migration `m206` then completes Option A for comments:
+
+- make `internal_comments.legal_entity_id` nullable
+- keep existing legal-entity comment routes filtering through `legal_entity_id`
+- allow task comments for country/group scopes through `scope_type`, `scope_id`,
+  and `scope_key` with `legal_entity_id = NULL`
 
 If implementation discovers that generic comment scope creates unacceptable
 cross-module risk, update this plan before coding a fallback `close_task_comments`
@@ -534,11 +551,13 @@ Compatibility rule:
 ### Acceptance
 
 - migrations are additive and idempotent
-- migration index registers `m203`, `m204`, and `m205`
+- migration index registers `m203`, `m204`, `m205`, and `m206`
 - task tables enforce tenant scoping and stable task identity
 - one task can have multiple evidence objects
-- country/group task evidence has an explicit compatibility decision
-- country/group task comments have an explicit compatibility decision
+- country/group task evidence follows Option A generic scope with nullable
+  legacy `legal_entity_id`
+- country/group task comments follow Option A generic scope with nullable
+  legacy `legal_entity_id`
 - existing evidence/comment rows are backfilled to legal-entity generic scope
 - durable task alerts can point to `CLOSE_TASK_INSTANCE`
 
@@ -1112,15 +1131,15 @@ Template catalog:
 
 ### Requirements
 
-- Add `CLOSE_TASK_INSTANCE` as a source ref type in backend and frontend.
-- Add `LOCAL_CLOSE_PACK` to `frontend/src/utils/sourceRefTypes.js`.
-- Include both constants in frontend `SOURCE_REF_TYPES`.
+- Reuse the backend and frontend source-ref registry constants for
+  `LOCAL_CLOSE_PACK` and `CLOSE_TASK_INSTANCE`.
+- Keep both constants included in backend and frontend `SOURCE_REF_TYPES`.
 - Every evidence mutation writes a task event.
 - Removing evidence from a task soft-deletes the `close_task_evidence` link.
 - Deleting the underlying `evidence_objects` row remains a separate evidence-owner action.
 - Download checks task scope access.
 - Evidence upload checks file size, hash, and storage integrity using existing adapter patterns.
-- Update existing evidence routes so legal-entity evidence remains backward-compatible after `m204`.
+- Update existing evidence routes so legal-entity evidence remains backward-compatible after `m204` and `m206`.
 - Add task comments through generic `internal_comments` scope compatibility.
 - Every comment create writes `COMMENT_ADDED` to `close_task_events`.
 - Sensitive task evidence/comment actions write central `audit_logs`.
@@ -1178,6 +1197,7 @@ Add scripts:
 
 - `backend/scripts/test-close-task-schema.js`
 - `backend/scripts/test-close-task-generic-scope-backfill.js`
+- `backend/scripts/test-close-task-source-ref-registry.js`
 - `backend/scripts/test-close-task-template-materialization.js`
 - `backend/scripts/test-close-task-lifecycle.js`
 - `backend/scripts/test-close-task-cancelled-status.js`
@@ -1199,6 +1219,7 @@ Add npm scripts:
 
 - `test:close-tasks:schema`
 - `test:close-tasks:generic-scope-backfill`
+- `test:close-tasks:source-refs`
 - `test:close-tasks:materialization`
 - `test:close-tasks:lifecycle`
 - `test:close-tasks:cancelled`
@@ -1265,6 +1286,8 @@ Regenerate and validate:
   and i18n messages
 - tests prove book-level tasks can be filtered and joined by `book_id`
 - tests prove `m204` backfills existing evidence/comment rows to legal-entity generic scope
+- tests prove `m206` allows generic country/group evidence/comment scope with nullable legacy `legal_entity_id`
+- tests prove source-ref registries expose `LOCAL_CLOSE_PACK` and `CLOSE_TASK_INSTANCE`
 
 ---
 
