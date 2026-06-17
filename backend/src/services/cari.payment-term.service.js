@@ -1,7 +1,6 @@
 import { query } from "../db.js";
 import { getVisibilityScope } from "../middleware/rbac.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
-import { buildVisibilityScopeWhereClause } from "./authz.scope.service.js";
 
 function mapPaymentTermRow(row) {
   return {
@@ -55,13 +54,20 @@ function buildPaymentTermVisibilityWhere(req, tenantId, params) {
   }
 
   const clauses = [];
-  const directScopeClause = buildVisibilityScopeWhereClause(scopeContext, params, {
-    GROUP: { idColumn: "le.group_company_id" },
-    COUNTRY: { idColumn: "le.country_id" },
-    LEGAL_ENTITY: { idColumn: "pt.legal_entity_id" },
-  });
-  if (directScopeClause !== "1 = 0") {
-    clauses.push(directScopeClause);
+
+  // Payment terms are legal-entity-owned rows. Use the legalEntities set as
+  // the canonical expanded visibility envelope. Country/group scopes are
+  // already expanded into legalEntities by the RBAC hierarchy resolver.
+  //
+  // Do not filter directly by le.country_id or le.group_company_id here:
+  // legal-entity scoped users also carry parent country/group context for
+  // hierarchy checks, and using those parent sets would over-broaden reads.
+  const legalEntityIds = Array.from(scopeContext.legalEntities || []).filter(Boolean);
+  if (legalEntityIds.length > 0) {
+    params.push(...legalEntityIds);
+    clauses.push(
+      `pt.legal_entity_id IN (${legalEntityIds.map(() => "?").join(", ")})`
+    );
   }
 
   const operatingUnitIds = Array.from(scopeContext.operatingUnits || []).filter(Boolean);
@@ -82,9 +88,13 @@ function buildPaymentTermVisibilityWhere(req, tenantId, params) {
   }
   return `(${clauses.join(" OR ")})`;
 }
-
 async function assertVisibleLegalEntityForRead(req, tenantId, legalEntityId, label = "legalEntityId") {
-  const legalEntityRow = await assertLegalEntityBelongsToTenant(tenantId, legalEntityId, label);
+  const parsedLegalEntityId = parsePositiveInt(legalEntityId);
+  const legalEntityRow = await assertLegalEntityBelongsToTenant(
+    tenantId,
+    parsedLegalEntityId,
+    label
+  );
   const scopeContext = getVisibilityScope(req);
   if (!scopeContext) {
     throw forbiddenError(`Access denied for ${label}`);
@@ -92,16 +102,12 @@ async function assertVisibleLegalEntityForRead(req, tenantId, legalEntityId, lab
   if (scopeContext.tenantWide) {
     return legalEntityRow;
   }
-  if (scopeContext.legalEntities.has(legalEntityId)) {
-    return legalEntityRow;
-  }
-  if (parsePositiveInt(legalEntityRow.country_id) && scopeContext.countries.has(parsePositiveInt(legalEntityRow.country_id))) {
-    return legalEntityRow;
-  }
-  if (
-    parsePositiveInt(legalEntityRow.group_company_id) &&
-    scopeContext.groups.has(parsePositiveInt(legalEntityRow.group_company_id))
-  ) {
+
+  // Use the expanded legalEntities set as the canonical read envelope.
+  // Country/group scopes are already expanded into legalEntities. This avoids
+  // granting all sibling entities merely because a legal-entity scoped actor
+  // also carries parent country/group context.
+  if (scopeContext.legalEntities?.has(parsedLegalEntityId)) {
     return legalEntityRow;
   }
 

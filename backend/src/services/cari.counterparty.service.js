@@ -284,6 +284,61 @@ function buildCounterpartyVisibilityFilter(req, params) {
   return `(${clauses.join(" OR ")})`;
 }
 
+function forbiddenError(message) {
+  const err = new Error(message);
+  err.status = 403;
+  return err;
+}
+
+async function assertCounterpartyLegalEntityFilterIsVisible({
+  req,
+  tenantId,
+  legalEntityId,
+}) {
+  const parsedTenantId = parsePositiveInt(tenantId);
+  const parsedLegalEntityId = parsePositiveInt(legalEntityId);
+
+  if (!parsedTenantId || !parsedLegalEntityId) {
+    return;
+  }
+
+  const scopeContext = getVisibilityScope(req);
+  if (!scopeContext) {
+    throw forbiddenError("Access denied for legalEntityId");
+  }
+
+  if (scopeContext.tenantWide) {
+    return;
+  }
+
+  // Legal-entity, country, and group scopes are expanded into legalEntities
+  // by the RBAC hierarchy resolver.
+  if (scopeContext.legalEntities?.has(parsedLegalEntityId)) {
+    return;
+  }
+
+  // OU-scoped users may filter by their parent legal entity, but row-level
+  // visibility must still restrict results to their visible OUs.
+  const operatingUnitIds = Array.from(scopeContext.operatingUnits || []).filter(Boolean);
+
+  if (operatingUnitIds.length > 0) {
+    const result = await query(
+      `SELECT COUNT(*) AS row_count
+       FROM operating_units
+       WHERE tenant_id = ?
+         AND legal_entity_id = ?
+         AND id IN (${operatingUnitIds.map(() => "?").join(", ")})`,
+      [parsedTenantId, parsedLegalEntityId, ...operatingUnitIds]
+    );
+
+    if (Number(result.rows?.[0]?.row_count || 0) > 0) {
+      return;
+    }
+  }
+
+  throw forbiddenError("Access denied for legalEntityId");
+}
+
 async function getCounterpartyBaseRow({
   tenantId,
   counterpartyId,
@@ -1218,8 +1273,14 @@ export async function listCounterpartyRows({
   conditions.push(buildCounterpartyVisibilityFilter(req, params));
 
   if (filters.legalEntityId) {
+    await assertCounterpartyLegalEntityFilterIsVisible({
+      req,
+      tenantId,
+      legalEntityId: filters.legalEntityId,
+    });
+
     // Keep legal-entity list filters usable for OU-scoped operators. Row-level
-    // visibility still prevents cross-scope reads.
+    // visibility still prevents cross-scope reads within the permitted entity.
     conditions.push("c.legal_entity_id = ?");
     params.push(filters.legalEntityId);
   }

@@ -6,7 +6,6 @@ import {
   assertLegalEntityBelongsToTenant,
 } from "../tenantGuards.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
-import { buildVisibilityScopeWhereClause } from "./authz.scope.service.js";
 import {
   buildOffsetPaginationResult,
   resolveOffsetPagination,
@@ -328,14 +327,14 @@ function normalizeLineChargeTargets(targetsInput = [], fieldPrefix = "chargeTarg
       targetLineNo,
       allocatedAmountTxn:
         rawAllocatedAmountTxn === undefined ||
-        rawAllocatedAmountTxn === null ||
-        rawAllocatedAmountTxn === ""
+          rawAllocatedAmountTxn === null ||
+          rawAllocatedAmountTxn === ""
           ? null
           : normalizeAmount(
-              rawAllocatedAmountTxn,
-              `${fieldPrefix}[${index}].allocatedAmountTxn`,
-              { allowZero: true }
-            ),
+            rawAllocatedAmountTxn,
+            `${fieldPrefix}[${index}].allocatedAmountTxn`,
+            { allowZero: true }
+          ),
     };
   });
 }
@@ -456,10 +455,10 @@ function buildPersistedChargeTargetAllocations({
     chargeLine?.lineNetAmountBase === null || chargeLine?.lineNetAmountBase === undefined
       ? null
       : normalizeAmount(
-          chargeLine?.lineNetAmountBase,
-          `${fieldPrefix}.lineNetAmountBase`,
-          { allowZero: true }
-        );
+        chargeLine?.lineNetAmountBase,
+        `${fieldPrefix}.lineNetAmountBase`,
+        { allowZero: true }
+      );
 
   let allocatedTxnAmounts;
   if (method === "MANUAL") {
@@ -504,10 +503,10 @@ function buildPersistedChargeTargetAllocations({
     chargeAmountBase === null
       ? new Array(targetRows.length).fill(null)
       : allocateResidualProportionalSplit(
-          chargeAmountBase,
-          allocatedTxnAmounts,
-          `${fieldPrefix}.chargeTargets allocatedAmountTxn sum`
-        );
+        chargeAmountBase,
+        allocatedTxnAmounts,
+        `${fieldPrefix}.chargeTargets allocatedAmountTxn sum`
+      );
 
   return targetRows.map(({ target, targetRow }, index) => ({
     targetLineNo: target.targetLineNo,
@@ -603,10 +602,10 @@ function buildDocumentChargeAllocationState(documentLines = []) {
       line?.lineNetAmountBase === null || line?.lineNetAmountBase === undefined
         ? null
         : normalizeAmount(
-            line?.lineNetAmountBase,
-            `storedLines[${Number(line?.lineNo || 0) || 0}].lineNetAmountBase`,
-            { allowZero: true }
-          );
+          line?.lineNetAmountBase,
+          `storedLines[${Number(line?.lineNo || 0) || 0}].lineNetAmountBase`,
+          { allowZero: true }
+        );
     if (
       chargeLineNetBase !== null
       && Math.abs(allocatedBaseTotal - chargeLineNetBase) > CHARGE_ALLOCATION_SUM_TOLERANCE
@@ -1276,8 +1275,7 @@ async function buildDocumentReverseLandedCostVoucherBlocks({
 function documentReverseBlockedByLandedCostVoucherError(documentId, landedCostVoucherBlocks) {
   const count = Array.isArray(landedCostVoucherBlocks) ? landedCostVoucherBlocks.length : 0;
   return conflictError(
-    `Document reverse is blocked by ${count} active landed-cost voucher source application${
-      count === 1 ? "" : "s"
+    `Document reverse is blocked by ${count} active landed-cost voucher source application${count === 1 ? "" : "s"
     }.`,
     "CARI_DOCUMENT_REVERSE_BLOCKED_BY_LANDED_COST_VOUCHER",
     {
@@ -1799,13 +1797,13 @@ function allocateFixedAssetAutoCreateUnitAmounts({
     const isFinalUnit = unitNo === totalUnitQuantity;
     const originalCostTxn = isFinalUnit
       ? roundFixedAssetPostingAmount(
-          totalAmountTxn - sharedAmountTxn * (totalUnitQuantity - 1)
-        )
+        totalAmountTxn - sharedAmountTxn * (totalUnitQuantity - 1)
+      )
       : sharedAmountTxn;
     const originalCostBase = isFinalUnit
       ? roundFixedAssetPostingAmount(
-          totalAmountBase - sharedAmountBase * (totalUnitQuantity - 1)
-        )
+        totalAmountBase - sharedAmountBase * (totalUnitQuantity - 1)
+      )
       : sharedAmountBase;
 
     if (
@@ -1836,9 +1834,9 @@ function buildAutoCreatedFixedAssetName({
   const fallbackBaseName = `CARI line ${Number(line?.lineNo || 0) || 0}`;
   const baseName = String(
     line?.fixedAssetNameOverride ||
-      line?.description ||
-      categoryRow?.name ||
-      fallbackBaseName
+    line?.description ||
+    categoryRow?.name ||
+    fallbackBaseName
   ).trim() || fallbackBaseName;
 
   if (Number(totalUnitQuantity || 0) > 1) {
@@ -1856,7 +1854,7 @@ function buildAutoCreatedFixedAssetDescription({
 }) {
   const baseDescription = String(
     line?.description ||
-      `Auto-created from CARI document ${documentNo || documentId}`
+    `Auto-created from CARI document ${documentNo || documentId}`
   ).trim();
   const suffix = Number(totalUnitQuantity || 0) > 1
     ? ` | Unit ${unitNo}`
@@ -2174,7 +2172,7 @@ async function listDocumentLineStockLinkRows({
   runQuery = query,
 }) {
   const result = await runQuery(
-      `SELECT
+    `SELECT
         sl.id,
         sl.tenant_id,
         sl.legal_entity_id,
@@ -2349,16 +2347,16 @@ async function loadDocumentLinesForDocument({
   }
 
   return lineRows.map((lineRow) =>
-    ({
-      ...mapDocumentLineRow(
+  ({
+    ...mapDocumentLineRow(
       lineRow,
       taxesByLineId.get(parsePositiveInt(lineRow.id)) || [],
       stockLinksByLineId.get(parsePositiveInt(lineRow.id)) || [],
       generatedFixedAssetsByLineId.get(parsePositiveInt(lineRow.id)) || []
-      ),
-      chargeTargets:
-        chargeTargetsByChargeLineId.get(parsePositiveInt(lineRow.id)) || [],
-    })
+    ),
+    chargeTargets:
+      chargeTargetsByChargeLineId.get(parsePositiveInt(lineRow.id)) || [],
+  })
   );
 }
 
@@ -2635,19 +2633,19 @@ async function resolveCounterpartyControlAccountOverride({
   const mapping =
     normalizedDirection === "AR"
       ? {
-          accountId: parsePositiveInt(counterpartyRow.ar_account_id),
-          roleEnabled: counterpartyRow.is_customer === true || Number(counterpartyRow.is_customer) === 1,
-          fieldLabel: "arAccountId",
-          expectedAccountType: "ASSET",
-        }
+        accountId: parsePositiveInt(counterpartyRow.ar_account_id),
+        roleEnabled: counterpartyRow.is_customer === true || Number(counterpartyRow.is_customer) === 1,
+        fieldLabel: "arAccountId",
+        expectedAccountType: "ASSET",
+      }
       : normalizedDirection === "AP"
         ? {
-            accountId: parsePositiveInt(counterpartyRow.ap_account_id),
-            roleEnabled:
-              counterpartyRow.is_vendor === true || Number(counterpartyRow.is_vendor) === 1,
-            fieldLabel: "apAccountId",
-            expectedAccountType: "LIABILITY",
-          }
+          accountId: parsePositiveInt(counterpartyRow.ap_account_id),
+          roleEnabled:
+            counterpartyRow.is_vendor === true || Number(counterpartyRow.is_vendor) === 1,
+          fieldLabel: "apAccountId",
+          expectedAccountType: "LIABILITY",
+        }
         : null;
 
   if (!mapping) {
@@ -2865,9 +2863,9 @@ async function resolveCariPostingAccounts({
   });
   const effectiveControl = overrideControl?.id
     ? {
-        id: overrideControl.id,
-        code: overrideControl.code || null,
-      }
+      id: overrideControl.id,
+      code: overrideControl.code || null,
+    }
     : control;
 
   const overrideOffset = await resolveCariOffsetAccountOverride({
@@ -2879,9 +2877,9 @@ async function resolveCariPostingAccounts({
   });
   const effectiveOffset = overrideOffset?.id
     ? {
-        id: overrideOffset.id,
-        code: overrideOffset.code || null,
-      }
+      id: overrideOffset.id,
+      code: overrideOffset.code || null,
+    }
     : mappedOffset;
   if (!effectiveOffset?.id) {
     throw badRequest(
@@ -2958,9 +2956,9 @@ export async function resolveCariControlAccountTx({
 
   const mappedControl = result.rows?.[0]
     ? {
-        id: parsePositiveInt(result.rows[0].account_id),
-        code: String(result.rows[0].account_code || ""),
-      }
+      id: parsePositiveInt(result.rows[0].account_id),
+      code: String(result.rows[0].account_code || ""),
+    }
     : null;
   if (!mappedControl?.id) {
     throw badRequest(
@@ -2977,9 +2975,9 @@ export async function resolveCariControlAccountTx({
   });
   const effectiveControl = overrideControl?.id
     ? {
-        id: overrideControl.id,
-        code: overrideControl.code || null,
-      }
+      id: overrideControl.id,
+      code: overrideControl.code || null,
+    }
     : mappedControl;
 
   return {
@@ -3741,8 +3739,8 @@ function normalizeExplicitDraftLines(linesInput, options = {}) {
           ? Number((lineNetAmountTxn / quantity).toFixed(AMOUNT_PRECISION_SCALE))
           : lineNetAmountTxn
         : normalizeAmount(line.unitPriceTxn, `lines[${index}].unitPriceTxn`, {
-            allowZero: true,
-          });
+          allowZero: true,
+        });
 
     const stockImpactMode = normalizeStockImpactModeForDirection(
       line.stockImpactMode,
@@ -3823,21 +3821,21 @@ function normalizeExplicitDraftLines(linesInput, options = {}) {
       ),
       improvementEffectiveDate: toDateOnlyString(
         line.improvementEffectiveDate
-          ?? line.improvement_effective_date
-          ?? null,
+        ?? line.improvement_effective_date
+        ?? null,
         `lines[${index}].improvementEffectiveDate`
       ),
       revisedUsefulLifeMonths: parsePositiveInt(
         line.revisedUsefulLifeMonths ??
-          line.revised_useful_life_months ??
-          line.improvementRevisedUsefulLifeMonths ??
-          line.improvement_revised_useful_life_months
+        line.revised_useful_life_months ??
+        line.improvementRevisedUsefulLifeMonths ??
+        line.improvement_revised_useful_life_months
       ),
       lifeExtensionMonths: parsePositiveInt(
         line.lifeExtensionMonths ??
-          line.life_extension_months ??
-          line.improvementLifeExtensionMonths ??
-          line.improvement_life_extension_months
+        line.life_extension_months ??
+        line.improvementLifeExtensionMonths ??
+        line.improvement_life_extension_months
       ),
       taxes: [],
     };
@@ -4120,8 +4118,8 @@ function buildSyntheticDraftLines({
       : null;
   const preservedQuantity = existingSingleLine
     ? normalizeAmount(existingSingleLine.quantity || 1, "existingLine.quantity", {
-        allowZero: true,
-      })
+      allowZero: true,
+    })
     : 1;
   const quantity = preservedQuantity > 0 ? preservedQuantity : 1;
   const unitPriceTxn =
@@ -4572,10 +4570,10 @@ async function replaceDocumentLinesTx(tx, { tenantId, legalEntityId, documentId,
           targetAllocation.allocatedAmountBase === null
             ? null
             : normalizeAmount(
-                targetAllocation.allocatedAmountBase,
-                `${fieldPrefix}.allocatedAmountBase`,
-                { allowZero: true }
-              ),
+              targetAllocation.allocatedAmountBase,
+              `${fieldPrefix}.allocatedAmountBase`,
+              { allowZero: true }
+            ),
         ]
       );
     }
@@ -4769,13 +4767,13 @@ function buildFixedAssetSaleCutoffPostingLines({
     const amountTxn = isLastSegment
       ? roundFixedAssetDisposalAmount(cutoffEconomics.cutoffDepreciationTxn - allocatedTxn)
       : roundFixedAssetDisposalAmount(
-          cutoffEconomics.cutoffDepreciationTxn * (segmentEligibleDays / totalEligibleDays)
-        );
+        cutoffEconomics.cutoffDepreciationTxn * (segmentEligibleDays / totalEligibleDays)
+      );
     const amountBase = isLastSegment
       ? roundFixedAssetDisposalAmount(cutoffEconomics.cutoffDepreciationBase - allocatedBase)
       : roundFixedAssetDisposalAmount(
-          cutoffEconomics.cutoffDepreciationBase * (segmentEligibleDays / totalEligibleDays)
-        );
+        cutoffEconomics.cutoffDepreciationBase * (segmentEligibleDays / totalEligibleDays)
+      );
     allocatedTxn = roundFixedAssetDisposalAmount(allocatedTxn + amountTxn);
     allocatedBase = roundFixedAssetDisposalAmount(allocatedBase + amountBase);
 
@@ -5064,7 +5062,7 @@ async function prepareFixedAssetPostingAugmentationsTx({
     }
     if (
       (cutoffEconomics.accumDeprTxn > FIXED_ASSET_DISPOSAL_EPSILON
-      || cutoffEconomics.accumDeprBase > FIXED_ASSET_DISPOSAL_EPSILON)
+        || cutoffEconomics.accumDeprBase > FIXED_ASSET_DISPOSAL_EPSILON)
       && !accumDeprAccountId
     ) {
       throw badRequest(
@@ -6803,8 +6801,8 @@ function isWorkflowAssignmentResolved(assignmentResolution) {
   }
   return Boolean(
     parsePositiveInt(assignmentResolution.assignmentId) ||
-      parsePositiveInt(assignmentResolution.assignment_id) ||
-      parsePositiveInt(assignmentResolution.id)
+    parsePositiveInt(assignmentResolution.assignment_id) ||
+    parsePositiveInt(assignmentResolution.id)
   );
 }
 
@@ -6893,7 +6891,7 @@ function buildCariDocumentWorkflowTargetSnapshotOverrides(assignmentResolution =
     workflow_definition_id:
       parsePositiveInt(
         assignmentResolution?.assignmentRow?.workflow_definition_id ??
-          assignmentResolution?.assignmentRow?.workflowDefinitionId
+        assignmentResolution?.assignmentRow?.workflowDefinitionId
       ) ||
       parsePositiveInt(routingRuleSnapshot?.workflow_definition_id) ||
       null,
@@ -6933,9 +6931,9 @@ function normalizeCariDocumentWorkflowAssignmentResolution(assignmentResolution)
       assignmentResolution.selection ||
       (assignmentResolution.diagnostics || assignmentRow
         ? {
-            assignmentRow,
-            diagnostics: assignmentResolution.diagnostics || null,
-          }
+          assignmentRow,
+          diagnostics: assignmentResolution.diagnostics || null,
+        }
         : null),
     scope: assignmentResolution.scope || null,
     thresholdAmount:
@@ -7008,14 +7006,14 @@ function buildCariDocumentWorkflowGateRoutingFromResolution(assignmentResolution
       snapshotData.workflowDefinitionId ||
       parsePositiveInt(
         normalized.assignmentRow?.workflow_definition_id ??
-          normalized.assignmentRow?.workflowDefinitionId
+        normalized.assignmentRow?.workflowDefinitionId
       ) ||
       null,
     workflowDefinitionCode:
       snapshotData.workflowDefinitionCode ||
       toNullableString(
         normalized.assignmentRow?.workflow_definition_code ??
-          normalized.assignmentRow?.workflowDefinitionCode,
+        normalized.assignmentRow?.workflowDefinitionCode,
         100
       ) ||
       null,
@@ -7023,7 +7021,7 @@ function buildCariDocumentWorkflowGateRoutingFromResolution(assignmentResolution
       snapshotData.workflowDefinitionName ||
       toNullableString(
         normalized.assignmentRow?.workflow_definition_name ??
-          normalized.assignmentRow?.workflowDefinitionName
+        normalized.assignmentRow?.workflowDefinitionName
       ) ||
       null,
     evaluatedAmount: snapshotData.evaluatedAmount,
@@ -7254,14 +7252,14 @@ async function loadWorkflowInstanceBridgeSnapshots({
     requestRow,
     policySnapshot:
       requestRow?.policy_snapshot_json &&
-      typeof requestRow.policy_snapshot_json === "object" &&
-      !Array.isArray(requestRow.policy_snapshot_json)
+        typeof requestRow.policy_snapshot_json === "object" &&
+        !Array.isArray(requestRow.policy_snapshot_json)
         ? requestRow.policy_snapshot_json
         : {},
     targetSnapshot:
       requestRow?.target_snapshot_json &&
-      typeof requestRow.target_snapshot_json === "object" &&
-      !Array.isArray(requestRow.target_snapshot_json)
+        typeof requestRow.target_snapshot_json === "object" &&
+        !Array.isArray(requestRow.target_snapshot_json)
         ? requestRow.target_snapshot_json
         : {},
   };
@@ -7580,8 +7578,8 @@ async function resolveCariDocumentWorkflowActionScope({
   const desiredActionCode = normalizeApWorkflowActionCode(actionCode);
   const explicitActionStep = desiredActionCode
     ? (Array.isArray(gate?.runtimeContext?.steps) ? gate.runtimeContext.steps : []).find(
-        (step) => normalizeUpperText(step?.actionCode) === desiredActionCode
-      ) || null
+      (step) => normalizeUpperText(step?.actionCode) === desiredActionCode
+    ) || null
     : null;
   let scopeDescriptor = resolveCariWorkflowScopeDescriptor(
     workflowScope,
@@ -7658,9 +7656,9 @@ function deriveApRuntimeEnrichment({
   const nextActorType = nextStep?.stageScopeType || null;
   const nextActionLabel = nextStep
     ? buildApWorkflowActionLabel(
-        nextActionCode,
-        SCOPE_TYPE_LABELS[nextActorType] || nextActorType || null
-      )
+      nextActionCode,
+      SCOPE_TYPE_LABELS[nextActorType] || nextActorType || null
+    )
     : null;
 
   return {
@@ -7765,15 +7763,15 @@ async function buildCariDocumentWorkflowGateSummary({
   const workflowInstanceId = parsePositiveInt(latestInstance?.id) || null;
   const bridgedSnapshots = workflowInstanceId
     ? await loadWorkflowInstanceBridgeSnapshots({
-        tenantId: normalizedTenantId,
-        instanceRow: latestInstance,
-        runQuery,
-      })
+      tenantId: normalizedTenantId,
+      instanceRow: latestInstance,
+      runQuery,
+    })
     : {
-        requestRow: null,
-        policySnapshot: {},
-        targetSnapshot: {},
-      };
+      requestRow: null,
+      policySnapshot: {},
+      targetSnapshot: {},
+    };
   const snapshotRouting = normalizeCariDocumentWorkflowSnapshotData(
     bridgedSnapshots.targetSnapshot
   );
@@ -7785,10 +7783,10 @@ async function buildCariDocumentWorkflowGateSummary({
   const liveAssignmentResolution = hasPersistedRoutingSnapshot
     ? null
     : await resolveCariDocumentWorkflowAssignment({
-        tenantId: normalizedTenantId,
-        documentRow,
-        runQuery,
-      });
+      tenantId: normalizedTenantId,
+      documentRow,
+      runQuery,
+    });
   const assignmentRow = liveAssignmentResolution?.assignmentRow || null;
   const liveRouting = buildCariDocumentWorkflowGateRoutingFromResolution(
     liveAssignmentResolution
@@ -7798,10 +7796,10 @@ async function buildCariDocumentWorkflowGateSummary({
     Boolean(effectiveRouting.workflowAssignmentId) || Boolean(assignmentRow);
   const latestDecisions = workflowInstanceId
     ? await listWorkflowInstanceDecisionRows({
-        tenantId: normalizedTenantId,
-        instanceId: workflowInstanceId,
-        runQuery,
-      })
+      tenantId: normalizedTenantId,
+      instanceId: workflowInstanceId,
+      runQuery,
+    })
     : [];
   const latestDecisionComment =
     latestDecisions[latestDecisions.length - 1]?.decisionNote ||
@@ -7821,8 +7819,8 @@ async function buildCariDocumentWorkflowGateSummary({
   const commonDefinitionId =
     parsePositiveInt(
       latestInstance?.workflow_definition_id ??
-        effectiveRouting.workflowDefinitionId ??
-        assignmentRow?.workflow_definition_id
+      effectiveRouting.workflowDefinitionId ??
+      assignmentRow?.workflow_definition_id
     ) || null;
   const commonAssignmentId =
     effectiveRouting.workflowAssignmentId ||
@@ -8056,10 +8054,10 @@ async function mapDocumentRowWithWorkflowGate(row, { lines, tenantId, runQuery =
   const workflowGate =
     normalizedTenantId && row
       ? await buildCariDocumentWorkflowGateSummary({
-          tenantId: normalizedTenantId,
-          documentRow: row,
-          runQuery,
-        })
+        tenantId: normalizedTenantId,
+        documentRow: row,
+        runQuery,
+      })
       : undefined;
   return mapDocumentRow(row, { lines, workflowGate });
 }
@@ -8081,22 +8079,22 @@ async function resolveCariDocumentSubmitWorkflowContext({
     typeof resolveWorkflowAssignment === "function"
       ? resolveWorkflowAssignment
       : async ({ tenantId: scopedTenantId }) => {
-          return resolveCariDocumentWorkflowAssignment({
-            tenantId: scopedTenantId,
-            documentRow,
-            runQuery,
-          });
-        };
+        return resolveCariDocumentWorkflowAssignment({
+          tenantId: scopedTenantId,
+          documentRow,
+          runQuery,
+        });
+      };
   const assignmentResolutionRaw =
     workflowGoverned && assignmentResolver
       ? await assignmentResolver({
-          tenantId,
-          documentId: parsePositiveInt(documentRow?.id),
-          direction: documentRow?.direction,
-          documentType: documentRow?.document_type ?? documentRow?.documentType,
-          legalEntityId: parsePositiveInt(documentRow?.legal_entity_id),
-          operatingUnitId: parsePositiveInt(documentRow?.operating_unit_id),
-        })
+        tenantId,
+        documentId: parsePositiveInt(documentRow?.id),
+        direction: documentRow?.direction,
+        documentType: documentRow?.document_type ?? documentRow?.documentType,
+        legalEntityId: parsePositiveInt(documentRow?.legal_entity_id),
+        operatingUnitId: parsePositiveInt(documentRow?.operating_unit_id),
+      })
       : null;
   const assignmentResolution = normalizeCariDocumentWorkflowAssignmentResolution(
     assignmentResolutionRaw
@@ -8129,7 +8127,7 @@ async function resolveCariDocumentSubmitPlan({
   const workflowDefinitionId =
     parsePositiveInt(
       resolvedAssignmentRow?.workflow_definition_id ??
-        resolvedAssignmentRow?.workflowDefinitionId
+      resolvedAssignmentRow?.workflowDefinitionId
     ) || null;
   const workflowScope =
     workflowContext.assignmentResolution?.scope ||
@@ -8281,8 +8279,6 @@ function buildCariDocumentVisibilityFilter(
   req,
   params,
   {
-    groupIdColumn = null,
-    countryIdColumn = null,
     legalEntityIdColumn = "d.legal_entity_id",
     operatingUnitIdColumn = "d.operating_unit_id",
   } = {}
@@ -8295,13 +8291,92 @@ function buildCariDocumentVisibilityFilter(
     return "1 = 1";
   }
 
-  const clause = buildVisibilityScopeWhereClause(scopeContext, params, {
-    GROUP: groupIdColumn ? { idColumn: groupIdColumn } : null,
-    COUNTRY: countryIdColumn ? { idColumn: countryIdColumn } : null,
-    LEGAL_ENTITY: legalEntityIdColumn ? { idColumn: legalEntityIdColumn } : null,
-    OPERATING_UNIT: operatingUnitIdColumn ? { idColumn: operatingUnitIdColumn } : null,
-  });
-  return clause || "1 = 0";
+  const clauses = [];
+
+  // CARI documents are legal-entity-owned rows, optionally linked to an OU.
+  // Use the expanded legalEntities set as the canonical legal-entity envelope.
+  //
+  // Do not filter directly by parent country/group columns here: legal-entity
+  // scoped actors may carry parent country/group context for hierarchy checks,
+  // and using those parent sets would over-broaden reads to sibling entities.
+  const legalEntityIds = Array.from(scopeContext.legalEntities || []).filter(Boolean);
+  if (legalEntityIdColumn && legalEntityIds.length > 0) {
+    params.push(...legalEntityIds);
+    clauses.push(
+      `${legalEntityIdColumn} IN (${legalEntityIds.map(() => "?").join(", ")})`
+    );
+  }
+
+  const operatingUnitIds = Array.from(scopeContext.operatingUnits || []).filter(Boolean);
+  if (operatingUnitIdColumn && operatingUnitIds.length > 0) {
+    params.push(...operatingUnitIds);
+    clauses.push(
+      `${operatingUnitIdColumn} IN (${operatingUnitIds.map(() => "?").join(", ")})`
+    );
+  }
+
+  if (clauses.length === 0) {
+    return "1 = 0";
+  }
+
+  return `(${clauses.join(" OR ")})`;
+}
+
+
+function forbiddenError(message) {
+  const err = new Error(message);
+  err.status = 403;
+  return err;
+}
+
+async function assertCariDocumentLegalEntityFilterIsVisible({
+  req,
+  tenantId,
+  legalEntityId,
+}) {
+  const parsedTenantId = parsePositiveInt(tenantId);
+  const parsedLegalEntityId = parsePositiveInt(legalEntityId);
+
+  if (!parsedTenantId || !parsedLegalEntityId) {
+    return;
+  }
+
+  const scopeContext = getVisibilityScope(req);
+  if (!scopeContext) {
+    throw forbiddenError("Access denied for legalEntityId");
+  }
+
+  if (scopeContext.tenantWide) {
+    return;
+  }
+
+  // Country/group scopes should already be expanded into legalEntities by the
+  // RBAC hierarchy resolver. This avoids allowing sibling legal entities just
+  // because a legal-entity scoped actor also carries parent country/group data.
+  if (scopeContext.legalEntities?.has(parsedLegalEntityId)) {
+    return;
+  }
+
+  // OU-scoped users may filter by their parent legal entity, but document rows
+  // remain restricted by the OU visibility filter.
+  const operatingUnitIds = Array.from(scopeContext.operatingUnits || []).filter(Boolean);
+
+  if (operatingUnitIds.length > 0) {
+    const result = await query(
+      `SELECT COUNT(*) AS row_count
+       FROM operating_units
+       WHERE tenant_id = ?
+         AND legal_entity_id = ?
+         AND id IN (${operatingUnitIds.map(() => "?").join(", ")})`,
+      [parsedTenantId, parsedLegalEntityId, ...operatingUnitIds]
+    );
+
+    if (Number(result.rows?.[0]?.row_count || 0) > 0) {
+      return;
+    }
+  }
+
+  throw forbiddenError("Access denied for legalEntityId");
 }
 
 /**
@@ -8319,16 +8394,20 @@ export async function listCariDocuments({
   const conditions = ["d.tenant_id = ?"];
   conditions.push(
     buildCariDocumentVisibilityFilter(req, params, {
-      groupIdColumn: "le_scope.group_company_id",
-      countryIdColumn: "le_scope.country_id",
       legalEntityIdColumn: "d.legal_entity_id",
       operatingUnitIdColumn: "d.operating_unit_id",
     })
   );
 
   if (filters.legalEntityId) {
+    await assertCariDocumentLegalEntityFilterIsVisible({
+      req,
+      tenantId,
+      legalEntityId: filters.legalEntityId,
+    });
+
     // Keep legal-entity list filters usable for OU-scoped actors. Row-level
-    // visibility still blocks cross-entity reads.
+    // visibility still blocks cross-entity reads within the permitted entity.
     conditions.push("d.legal_entity_id = ?");
     params.push(filters.legalEntityId);
   }
@@ -8934,43 +9013,43 @@ export async function updateCariDraftDocumentById({
       hasExplicitLines || existingLineRows.length === 0 || (existingLineRows.length <= 1 && financialFieldsTouched);
     const draftWriteModel = shouldReplaceLines
       ? await resolveDraftDocumentWriteModel({
-          tenantId,
-          legalEntityId,
-          documentOperatingUnitId: operatingUnitId,
-          documentDate: nextDocumentDate,
-          direction: nextDirection,
-          documentType: nextDocumentType,
-          linesInput: hasExplicitLines ? payload.lines : null,
-          amountTxn: hasExplicitLines ? payload.amountTxn : nextAmountTxn,
-          amountBase: payload.amountBase,
-          currencyCode: nextCurrencyCode,
-          fxRate: nextFxRate,
-          functionalCurrencyCode: legalEntity.functional_currency_code,
-          rawLinesInput: hasExplicitLines && Array.isArray(req?.body?.lines)
-            ? req.body.lines
-            : null,
-          existingLineRows,
-          runQuery: tx.query,
-        })
+        tenantId,
+        legalEntityId,
+        documentOperatingUnitId: operatingUnitId,
+        documentDate: nextDocumentDate,
+        direction: nextDirection,
+        documentType: nextDocumentType,
+        linesInput: hasExplicitLines ? payload.lines : null,
+        amountTxn: hasExplicitLines ? payload.amountTxn : nextAmountTxn,
+        amountBase: payload.amountBase,
+        currencyCode: nextCurrencyCode,
+        fxRate: nextFxRate,
+        functionalCurrencyCode: legalEntity.functional_currency_code,
+        rawLinesInput: hasExplicitLines && Array.isArray(req?.body?.lines)
+          ? req.body.lines
+          : null,
+        existingLineRows,
+        runQuery: tx.query,
+      })
       : null;
     const resolvedAmounts = draftWriteModel
       ? draftWriteModel.resolvedAmounts
       : {
-          amountTxn: normalizeAmount(nextAmountTxn, "amountTxn"),
-          amountBase: normalizeAmount(nextAmountBase, "amountBase"),
-          currencyCode: normalizeUpperText(nextCurrencyCode),
-          fxRate: normalizeOptionalPositiveDecimal(nextFxRate, "fxRate"),
-        };
+        amountTxn: normalizeAmount(nextAmountTxn, "amountTxn"),
+        amountBase: normalizeAmount(nextAmountBase, "amountBase"),
+        currencyCode: normalizeUpperText(nextCurrencyCode),
+        fxRate: normalizeOptionalPositiveDecimal(nextFxRate, "fxRate"),
+      };
     const headerTotals = draftWriteModel
       ? draftWriteModel.headerTotals
       : {
-          subtotalAmountTxn: toDecimalNumber(existing.subtotal_amount_txn),
-          subtotalAmountBase: toDecimalNumber(existing.subtotal_amount_base),
-          taxAmountTxn: toDecimalNumber(existing.tax_amount_txn),
-          taxAmountBase: toDecimalNumber(existing.tax_amount_base),
-          grossAmountTxn: toDecimalNumber(existing.gross_amount_txn),
-          grossAmountBase: toDecimalNumber(existing.gross_amount_base),
-        };
+        subtotalAmountTxn: toDecimalNumber(existing.subtotal_amount_txn),
+        subtotalAmountBase: toDecimalNumber(existing.subtotal_amount_base),
+        taxAmountTxn: toDecimalNumber(existing.tax_amount_txn),
+        taxAmountBase: toDecimalNumber(existing.tax_amount_base),
+        grossAmountTxn: toDecimalNumber(existing.gross_amount_txn),
+        grossAmountBase: toDecimalNumber(existing.gross_amount_base),
+      };
     const draftAccessContext = await resolveCariDocumentDraftAccessContext({
       tenantId,
       documentRow: {
@@ -9483,7 +9562,7 @@ export async function cancelCariDraftDocumentById({
       runQuery: tx.query,
       tenantId,
       userId: payload.userId,
-      action: "cari.document.cancel",
+      action: "cari.document.draft.cancel",
       legalEntityId: existingLegalEntityId,
       documentId,
       payload: {
@@ -9619,445 +9698,445 @@ async function postCariDocumentByIdTx(
     throw badRequest("paymentTermId must belong to legalEntityId");
   }
 
-    const resolvedDueDate = resolveDueDate({
-      documentDate,
-      dueDate: toDateOnlyString(lockedDocument.due_date, "dueDate"),
-      documentType,
-      paymentTermRow: paymentTerm,
-    });
-    assertDateOrder(documentDate, resolvedDueDate);
-    assertDueDateByDocumentType({
-      documentType,
-      dueDate: resolvedDueDate,
-    });
+  const resolvedDueDate = resolveDueDate({
+    documentDate,
+    dueDate: toDateOnlyString(lockedDocument.due_date, "dueDate"),
+    documentType,
+    paymentTermRow: paymentTerm,
+  });
+  assertDateOrder(documentDate, resolvedDueDate);
+  assertDueDateByDocumentType({
+    documentType,
+    dueDate: resolvedDueDate,
+  });
 
-    const legalEntity = await assertLegalEntityBelongsToTenant(
-      tenantId,
-      lockedLegalEntityId,
-      "legalEntityId"
-    );
-    const fxPolicy = await resolveFxPostingPolicy({
-      tenantId,
-      documentDate,
-      documentCurrencyCode: currencyCode,
-      functionalCurrencyCode: legalEntity.functional_currency_code,
-      draftFxRate: lockedDocument.fx_rate,
-      useFxOverride: Boolean(payload.useFxOverride),
-      fxOverrideReason: payload.fxOverrideReason,
-      runQuery: tx.query,
-    });
+  const legalEntity = await assertLegalEntityBelongsToTenant(
+    tenantId,
+    lockedLegalEntityId,
+    "legalEntityId"
+  );
+  const fxPolicy = await resolveFxPostingPolicy({
+    tenantId,
+    documentDate,
+    documentCurrencyCode: currencyCode,
+    functionalCurrencyCode: legalEntity.functional_currency_code,
+    draftFxRate: lockedDocument.fx_rate,
+    useFxOverride: Boolean(payload.useFxOverride),
+    fxOverrideReason: payload.fxOverrideReason,
+    runQuery: tx.query,
+  });
 
-    const postingAccounts = await resolveCariPostingAccounts({
-      tenantId,
-      legalEntityId: lockedLegalEntityId,
-      direction,
-      counterpartyRow: counterparty,
-      offsetAccountId: payload.offsetAccountId,
-      offsetAccountCode: payload.offsetAccountCode,
-      runQuery: tx.query,
-    });
+  const postingAccounts = await resolveCariPostingAccounts({
+    tenantId,
+    legalEntityId: lockedLegalEntityId,
+    direction,
+    counterpartyRow: counterparty,
+    offsetAccountId: payload.offsetAccountId,
+    offsetAccountCode: payload.offsetAccountCode,
+    runQuery: tx.query,
+  });
 
-    let documentLines = await loadDocumentLinesForDocument({
-      tenantId,
-      legalEntityId: lockedLegalEntityId,
-      documentId,
-      runQuery: tx.query,
-    });
-    documentLines = await syncStoredDocumentLinesForPostingTx({
-      tx,
-      tenantId,
-      legalEntityId: lockedLegalEntityId,
-      documentId,
-      direction,
-      documentLines,
-    });
-    await assertStrictStockDocumentPostingReadiness({
-      tenantId,
-      legalEntityId: lockedLegalEntityId,
-      documentOperatingUnitId,
-      documentLines,
-      documentDirection: direction,
-      fieldCollectionLabel: "storedLines",
-      ownerLabel: "document",
-      runQuery: tx.query,
-    });
-    const chargeAllocationState = buildDocumentChargeAllocationState(documentLines);
-    const postingDocumentLines = applyDocumentChargeAugmentation(
-      documentLines,
-      chargeAllocationState
+  let documentLines = await loadDocumentLinesForDocument({
+    tenantId,
+    legalEntityId: lockedLegalEntityId,
+    documentId,
+    runQuery: tx.query,
+  });
+  documentLines = await syncStoredDocumentLinesForPostingTx({
+    tx,
+    tenantId,
+    legalEntityId: lockedLegalEntityId,
+    documentId,
+    direction,
+    documentLines,
+  });
+  await assertStrictStockDocumentPostingReadiness({
+    tenantId,
+    legalEntityId: lockedLegalEntityId,
+    documentOperatingUnitId,
+    documentLines,
+    documentDirection: direction,
+    fieldCollectionLabel: "storedLines",
+    ownerLabel: "document",
+    runQuery: tx.query,
+  });
+  const chargeAllocationState = buildDocumentChargeAllocationState(documentLines);
+  const postingDocumentLines = applyDocumentChargeAugmentation(
+    documentLines,
+    chargeAllocationState
+  );
+  const hasChargeAllocatedLines = chargeAllocationState.chargeLines.length > 0;
+  const postedNumbering = await reservePostedSequence({
+    tenantId,
+    legalEntityId: lockedLegalEntityId,
+    direction,
+    documentType,
+    documentDate,
+    runQuery: tx.query,
+  });
+  const postingLineRows = Array.isArray(payload.postingLines) ? payload.postingLines : null;
+  const usesStoredLineTaxes = documentLines.some(
+    (line) => Array.isArray(line?.taxes) && line.taxes.length > 0
+  );
+  if (
+    usesStoredLineTaxes &&
+    postingLineRows?.length
+  ) {
+    throw badRequest("postingLines are not supported for line-taxed documents yet");
+  }
+  if (hasChargeAllocatedLines && postingLineRows?.length) {
+    throw badRequest(
+      "postingLines are not supported for charge-allocated documents yet"
     );
-    const hasChargeAllocatedLines = chargeAllocationState.chargeLines.length > 0;
-    const postedNumbering = await reservePostedSequence({
-      tenantId,
-      legalEntityId: lockedLegalEntityId,
-      direction,
-      documentType,
-      documentDate,
-      runQuery: tx.query,
-    });
-    const postingLineRows = Array.isArray(payload.postingLines) ? payload.postingLines : null;
-    const usesStoredLineTaxes = documentLines.some(
-      (line) => Array.isArray(line?.taxes) && line.taxes.length > 0
-    );
-    if (
-      usesStoredLineTaxes &&
-      postingLineRows?.length
-    ) {
-      throw badRequest("postingLines are not supported for line-taxed documents yet");
-    }
-    if (hasChargeAllocatedLines && postingLineRows?.length) {
-      throw badRequest(
-        "postingLines are not supported for charge-allocated documents yet"
+  }
+
+  const documentNetAmountTxn = normalizeAmount(
+    documentLines.length > 0
+      ? sumAmountRows(documentLines, "lineNetAmountTxn")
+      : lockedDocument.subtotal_amount_txn ?? lockedDocument.amount_txn,
+    "documentNetAmountTxn"
+  );
+  const documentNetAmountBase = normalizeAmount(
+    documentLines.length > 0
+      ? sumAmountRows(documentLines, "lineNetAmountBase")
+      : lockedDocument.subtotal_amount_base ?? lockedDocument.amount_base,
+    "documentNetAmountBase"
+  );
+  const subledgerReferenceNo = `${CARI_SUBLEDGER_REFERENCE_PREFIX}${documentId}`;
+  const defaultLineDescription = `Cari ${direction} ${documentType} ${postedNumbering.documentNo}`;
+  const postingSides = resolveCariPostingSides({ direction, documentType });
+  const postingLineSummary = [];
+  const postingLines = [];
+  let postingLinesUseLineLevelOffsets = false;
+
+  if (postingLineRows?.length) {
+    let postingLinesTotalTxn = 0;
+    let postingLinesTotalBase = 0;
+
+    for (let index = 0; index < postingLineRows.length; index += 1) {
+      const line = postingLineRows[index] || {};
+      const lineAmountTxn = normalizeAmount(
+        line.amountTxn,
+        `postingLines[${index}].amountTxn`
       );
-    }
+      const lineAmountBase = normalizeAmount(
+        line.amountBase,
+        `postingLines[${index}].amountBase`
+      );
+      const lineHasOffsetOverride =
+        parsePositiveInt(line.offsetAccountId) ||
+        String(line.offsetAccountCode || "").trim();
 
-    const documentNetAmountTxn = normalizeAmount(
-      documentLines.length > 0
-        ? sumAmountRows(documentLines, "lineNetAmountTxn")
-        : lockedDocument.subtotal_amount_txn ?? lockedDocument.amount_txn,
-      "documentNetAmountTxn"
-    );
-    const documentNetAmountBase = normalizeAmount(
-      documentLines.length > 0
-        ? sumAmountRows(documentLines, "lineNetAmountBase")
-        : lockedDocument.subtotal_amount_base ?? lockedDocument.amount_base,
-      "documentNetAmountBase"
-    );
-    const subledgerReferenceNo = `${CARI_SUBLEDGER_REFERENCE_PREFIX}${documentId}`;
-    const defaultLineDescription = `Cari ${direction} ${documentType} ${postedNumbering.documentNo}`;
-    const postingSides = resolveCariPostingSides({ direction, documentType });
-    const postingLineSummary = [];
-    const postingLines = [];
-    let postingLinesUseLineLevelOffsets = false;
-
-    if (postingLineRows?.length) {
-      let postingLinesTotalTxn = 0;
-      let postingLinesTotalBase = 0;
-
-      for (let index = 0; index < postingLineRows.length; index += 1) {
-        const line = postingLineRows[index] || {};
-        const lineAmountTxn = normalizeAmount(
-          line.amountTxn,
-          `postingLines[${index}].amountTxn`
-        );
-        const lineAmountBase = normalizeAmount(
-          line.amountBase,
-          `postingLines[${index}].amountBase`
-        );
-        const lineHasOffsetOverride =
-          parsePositiveInt(line.offsetAccountId) ||
-          String(line.offsetAccountCode || "").trim();
-
-        let linePostingAccounts = postingAccounts;
-        if (lineHasOffsetOverride) {
-          linePostingAccounts = await resolveCariPostingAccounts({
-            tenantId,
-            legalEntityId: lockedLegalEntityId,
-            direction,
-            counterpartyRow: counterparty,
-            offsetAccountId: line.offsetAccountId,
-            offsetAccountCode: line.offsetAccountCode,
-            runQuery: tx.query,
-          });
-          postingLinesUseLineLevelOffsets = true;
-        }
-
-        if (
-          parsePositiveInt(linePostingAccounts.controlAccountId) !==
-          parsePositiveInt(postingAccounts.controlAccountId)
-        ) {
-          throw badRequest(
-            `postingLines[${index}] resolved a different control account; check counterparty or mapping setup`
-          );
-        }
-
-        postingLinesTotalTxn = Number(
-          (postingLinesTotalTxn + lineAmountTxn).toFixed(AMOUNT_PRECISION_SCALE)
-        );
-        postingLinesTotalBase = Number(
-          (postingLinesTotalBase + lineAmountBase).toFixed(AMOUNT_PRECISION_SCALE)
-        );
-
-        const lineDescription = summarizePostingLineDescription({
-          baseDescription: defaultLineDescription,
-          lineDescription: line.description,
-          lineIndex: index,
-          lineCount: postingLineRows.length,
+      let linePostingAccounts = postingAccounts;
+      if (lineHasOffsetOverride) {
+        linePostingAccounts = await resolveCariPostingAccounts({
+          tenantId,
+          legalEntityId: lockedLegalEntityId,
+          direction,
+          counterpartyRow: counterparty,
+          offsetAccountId: line.offsetAccountId,
+          offsetAccountCode: line.offsetAccountCode,
+          runQuery: tx.query,
         });
-        postingLineSummary.push({
-          lineNo: index + 1,
-          amountTxn: lineAmountTxn,
-          amountBase: lineAmountBase,
-          offsetAccountId: linePostingAccounts.offsetAccountId,
-          offsetAccountCode: linePostingAccounts.offsetAccountCode || null,
-          description: toNullableString(line.description, 255),
-        });
-        postingLines.push(
-          buildCariDirectionalJournalLine({
-            accountId: linePostingAccounts.offsetAccountId,
-            side: postingSides.offsetSide,
-            amountTxn: lineAmountTxn,
-            amountBase: lineAmountBase,
-            lineDescription,
-            subledgerReferenceNo,
-            currencyCode,
-          })
-        );
+        postingLinesUseLineLevelOffsets = true;
       }
 
       if (
-        !amountsAreEqual(
-          postingLinesTotalTxn,
-          documentNetAmountTxn,
-          AMOUNT_BALANCE_EPSILON
-        ) ||
-        !amountsAreEqual(
-          postingLinesTotalBase,
-          documentNetAmountBase,
-          AMOUNT_BALANCE_EPSILON
-        )
+        parsePositiveInt(linePostingAccounts.controlAccountId) !==
+        parsePositiveInt(postingAccounts.controlAccountId)
       ) {
         throw badRequest(
-          "postingLines totals must equal draft net/subtotal amountTxn and amountBase"
-        );
-      }
-    } else if (postingDocumentLines.length > 0) {
-      let lineDrivenTotalTxn = 0;
-      let lineDrivenTotalBase = 0;
-
-      for (let index = 0; index < postingDocumentLines.length; index += 1) {
-        const line = postingDocumentLines[index] || {};
-        const lineAmountTxn = normalizeAmount(
-          line.lineNetAmountTxn ?? 0,
-          `documentLines[${index}].lineNetAmountTxn`,
-          { allowZero: true }
-        );
-        const lineAmountBase = normalizeAmount(
-          line.lineNetAmountBase ?? 0,
-          `documentLines[${index}].lineNetAmountBase`,
-          { allowZero: true }
-        );
-        if (
-          lineAmountTxn <= AMOUNT_BALANCE_EPSILON &&
-          lineAmountBase <= AMOUNT_BALANCE_EPSILON
-        ) {
-          continue;
-        }
-        if (isChargeLine(line)) {
-          continue;
-        }
-
-        lineDrivenTotalTxn = Number(
-          (lineDrivenTotalTxn + lineAmountTxn).toFixed(AMOUNT_PRECISION_SCALE)
-        );
-        lineDrivenTotalBase = Number(
-          (lineDrivenTotalBase + lineAmountBase).toFixed(AMOUNT_PRECISION_SCALE)
-        );
-
-        if (
-          normalizeUpperText(direction) === "AR" &&
-          normalizeUpperText(line.subledgerType || "NONE") === "FIXED_ASSET"
-        ) {
-          continue;
-        }
-
-        const resolvedLinePostingAccount = parsePositiveInt(line.postingAccountId)
-          ? await resolveCariLinePostingAccount({
-              tenantId,
-              legalEntityId: lockedLegalEntityId,
-              accountId: line.postingAccountId,
-              fieldLabel: `lines[${index + 1}].postingAccountId`,
-              runQuery: tx.query,
-            })
-          : {
-              id: postingAccounts.offsetAccountId,
-              code: postingAccounts.offsetAccountCode || null,
-            };
-        const lineDescription = summarizePostingLineDescription({
-          baseDescription: defaultLineDescription,
-          lineDescription: line.description,
-          lineIndex: index,
-          lineCount: postingDocumentLines.length,
-        });
-        postingLineSummary.push({
-          lineNo: Number(line.lineNo || index + 1),
-          amountTxn: lineAmountTxn,
-          amountBase: lineAmountBase,
-          offsetAccountId: resolvedLinePostingAccount.id,
-          offsetAccountCode: resolvedLinePostingAccount.code || null,
-          description: toNullableString(line.description, 255),
-        });
-        postingLines.push(
-          buildCariDirectionalJournalLine({
-            accountId: resolvedLinePostingAccount.id,
-            side: postingSides.offsetSide,
-            amountTxn: lineAmountTxn,
-            amountBase: lineAmountBase,
-            lineDescription,
-            subledgerReferenceNo,
-            currencyCode,
-          })
+          `postingLines[${index}] resolved a different control account; check counterparty or mapping setup`
         );
       }
 
-      if (
-        !amountsAreEqual(
-          lineDrivenTotalTxn,
-          documentNetAmountTxn,
-          AMOUNT_BALANCE_EPSILON
-        ) ||
-        !amountsAreEqual(
-          lineDrivenTotalBase,
-          documentNetAmountBase,
-          AMOUNT_BALANCE_EPSILON
-        )
-      ) {
-        throw badRequest(
-          "Stored document lines are out of sync with draft subtotal amounts"
-        );
-      }
-    } else {
+      postingLinesTotalTxn = Number(
+        (postingLinesTotalTxn + lineAmountTxn).toFixed(AMOUNT_PRECISION_SCALE)
+      );
+      postingLinesTotalBase = Number(
+        (postingLinesTotalBase + lineAmountBase).toFixed(AMOUNT_PRECISION_SCALE)
+      );
+
+      const lineDescription = summarizePostingLineDescription({
+        baseDescription: defaultLineDescription,
+        lineDescription: line.description,
+        lineIndex: index,
+        lineCount: postingLineRows.length,
+      });
       postingLineSummary.push({
-        lineNo: 1,
-        amountTxn: documentNetAmountTxn,
-        amountBase: documentNetAmountBase,
-        offsetAccountId: postingAccounts.offsetAccountId,
-        offsetAccountCode: postingAccounts.offsetAccountCode || null,
-        description: null,
+        lineNo: index + 1,
+        amountTxn: lineAmountTxn,
+        amountBase: lineAmountBase,
+        offsetAccountId: linePostingAccounts.offsetAccountId,
+        offsetAccountCode: linePostingAccounts.offsetAccountCode || null,
+        description: toNullableString(line.description, 255),
       });
       postingLines.push(
         buildCariDirectionalJournalLine({
-          accountId: postingAccounts.offsetAccountId,
+          accountId: linePostingAccounts.offsetAccountId,
           side: postingSides.offsetSide,
-          amountTxn: documentNetAmountTxn,
-          amountBase: documentNetAmountBase,
-          lineDescription: defaultLineDescription,
+          amountTxn: lineAmountTxn,
+          amountBase: lineAmountBase,
+          lineDescription,
           subledgerReferenceNo,
           currencyCode,
         })
       );
     }
 
-    const taxAugmentation = usesStoredLineTaxes
-      ? {
-          enabled: true,
-          lines: buildCariTaxAugmentationFromStoredLineTaxes({
-            lineTaxes: documentLines.flatMap((line) => line.taxes || []),
-            controlAccountId: postingAccounts.controlAccountId,
-            direction,
-            reverseTaxSign: !POSITIVE_SIGN_DOCUMENT_TYPES.has(documentType),
-            currencyCode,
-            subledgerReferenceNo,
-            lineDescription: `Cari tax ${direction} ${documentType} ${postedNumbering.documentNo}`.slice(
-              0,
-              255
-            ),
-            includeControlBalancing: false,
-          }),
-          summary: null,
-        }
-      : await buildCariTaxAugmentation({
+    if (
+      !amountsAreEqual(
+        postingLinesTotalTxn,
+        documentNetAmountTxn,
+        AMOUNT_BALANCE_EPSILON
+      ) ||
+      !amountsAreEqual(
+        postingLinesTotalBase,
+        documentNetAmountBase,
+        AMOUNT_BALANCE_EPSILON
+      )
+    ) {
+      throw badRequest(
+        "postingLines totals must equal draft net/subtotal amountTxn and amountBase"
+      );
+    }
+  } else if (postingDocumentLines.length > 0) {
+    let lineDrivenTotalTxn = 0;
+    let lineDrivenTotalBase = 0;
+
+    for (let index = 0; index < postingDocumentLines.length; index += 1) {
+      const line = postingDocumentLines[index] || {};
+      const lineAmountTxn = normalizeAmount(
+        line.lineNetAmountTxn ?? 0,
+        `documentLines[${index}].lineNetAmountTxn`,
+        { allowZero: true }
+      );
+      const lineAmountBase = normalizeAmount(
+        line.lineNetAmountBase ?? 0,
+        `documentLines[${index}].lineNetAmountBase`,
+        { allowZero: true }
+      );
+      if (
+        lineAmountTxn <= AMOUNT_BALANCE_EPSILON &&
+        lineAmountBase <= AMOUNT_BALANCE_EPSILON
+      ) {
+        continue;
+      }
+      if (isChargeLine(line)) {
+        continue;
+      }
+
+      lineDrivenTotalTxn = Number(
+        (lineDrivenTotalTxn + lineAmountTxn).toFixed(AMOUNT_PRECISION_SCALE)
+      );
+      lineDrivenTotalBase = Number(
+        (lineDrivenTotalBase + lineAmountBase).toFixed(AMOUNT_PRECISION_SCALE)
+      );
+
+      if (
+        normalizeUpperText(direction) === "AR" &&
+        normalizeUpperText(line.subledgerType || "NONE") === "FIXED_ASSET"
+      ) {
+        continue;
+      }
+
+      const resolvedLinePostingAccount = parsePositiveInt(line.postingAccountId)
+        ? await resolveCariLinePostingAccount({
           tenantId,
           legalEntityId: lockedLegalEntityId,
-          postingDate: documentDate,
-          direction,
-          documentType,
-          baseAmount: documentNetAmountBase,
-          controlAccountId: postingAccounts.controlAccountId,
-          currencyCode,
-          subledgerReferenceNo,
-          lineDescription: `Cari tax ${direction} ${documentType} ${postedNumbering.documentNo}`.slice(
-            0,
-            255
-          ),
-          reverseTaxSign: !POSITIVE_SIGN_DOCUMENT_TYPES.has(documentType),
-          includeControlBalancing: false,
+          accountId: line.postingAccountId,
+          fieldLabel: `lines[${index + 1}].postingAccountId`,
           runQuery: tx.query,
-        });
-    const taxAmountTxn = taxAugmentation.lines.length
-      ? sumJournalLineAmountsTxn(taxAugmentation.lines)
-      : normalizeAmount(lockedDocument.tax_amount_txn ?? 0, "taxAmountTxn", {
-          allowZero: true,
-        });
-    const taxAmountBase = taxAugmentation.lines.length
-      ? sumJournalLineAmountsBase(taxAugmentation.lines)
-      : normalizeAmount(lockedDocument.tax_amount_base ?? 0, "taxAmountBase", {
-          allowZero: true,
-        });
-    const grossAmountTxn = Number(
-      (documentNetAmountTxn + taxAmountTxn).toFixed(AMOUNT_PRECISION_SCALE)
-    );
-    const grossAmountBase = Number(
-      (documentNetAmountBase + taxAmountBase).toFixed(AMOUNT_PRECISION_SCALE)
-    );
-
-    if (taxAugmentation.lines.length > 0) {
-      postingLines.push(...taxAugmentation.lines);
+        })
+        : {
+          id: postingAccounts.offsetAccountId,
+          code: postingAccounts.offsetAccountCode || null,
+        };
+      const lineDescription = summarizePostingLineDescription({
+        baseDescription: defaultLineDescription,
+        lineDescription: line.description,
+        lineIndex: index,
+        lineCount: postingDocumentLines.length,
+      });
+      postingLineSummary.push({
+        lineNo: Number(line.lineNo || index + 1),
+        amountTxn: lineAmountTxn,
+        amountBase: lineAmountBase,
+        offsetAccountId: resolvedLinePostingAccount.id,
+        offsetAccountCode: resolvedLinePostingAccount.code || null,
+        description: toNullableString(line.description, 255),
+      });
+      postingLines.push(
+        buildCariDirectionalJournalLine({
+          accountId: resolvedLinePostingAccount.id,
+          side: postingSides.offsetSide,
+          amountTxn: lineAmountTxn,
+          amountBase: lineAmountBase,
+          lineDescription,
+          subledgerReferenceNo,
+          currencyCode,
+        })
+      );
     }
+
+    if (
+      !amountsAreEqual(
+        lineDrivenTotalTxn,
+        documentNetAmountTxn,
+        AMOUNT_BALANCE_EPSILON
+      ) ||
+      !amountsAreEqual(
+        lineDrivenTotalBase,
+        documentNetAmountBase,
+        AMOUNT_BALANCE_EPSILON
+      )
+    ) {
+      throw badRequest(
+        "Stored document lines are out of sync with draft subtotal amounts"
+      );
+    }
+  } else {
+    postingLineSummary.push({
+      lineNo: 1,
+      amountTxn: documentNetAmountTxn,
+      amountBase: documentNetAmountBase,
+      offsetAccountId: postingAccounts.offsetAccountId,
+      offsetAccountCode: postingAccounts.offsetAccountCode || null,
+      description: null,
+    });
     postingLines.push(
       buildCariDirectionalJournalLine({
-        accountId: postingAccounts.controlAccountId,
-        side: postingSides.controlSide,
-        amountTxn: grossAmountTxn,
-        amountBase: grossAmountBase,
+        accountId: postingAccounts.offsetAccountId,
+        side: postingSides.offsetSide,
+        amountTxn: documentNetAmountTxn,
+        amountBase: documentNetAmountBase,
         lineDescription: defaultLineDescription,
         subledgerReferenceNo,
         currencyCode,
       })
     );
-    const journalContext = await resolveBookAndOpenPeriodForDate({
+  }
+
+  const taxAugmentation = usesStoredLineTaxes
+    ? {
+      enabled: true,
+      lines: buildCariTaxAugmentationFromStoredLineTaxes({
+        lineTaxes: documentLines.flatMap((line) => line.taxes || []),
+        controlAccountId: postingAccounts.controlAccountId,
+        direction,
+        reverseTaxSign: !POSITIVE_SIGN_DOCUMENT_TYPES.has(documentType),
+        currencyCode,
+        subledgerReferenceNo,
+        lineDescription: `Cari tax ${direction} ${documentType} ${postedNumbering.documentNo}`.slice(
+          0,
+          255
+        ),
+        includeControlBalancing: false,
+      }),
+      summary: null,
+    }
+    : await buildCariTaxAugmentation({
       tenantId,
       legalEntityId: lockedLegalEntityId,
-      targetDate: documentDate,
-      runQuery: tx.query,
-      assertSoftClosedPermissionFn: () => assertSecondaryPermission(req, "gl.journal.post_to_closed_period"),
-    });
-    const fixedAssetPostingState = await prepareFixedAssetPostingAugmentationsTx({
-      tx,
-      tenantId,
-      legalEntityId: lockedLegalEntityId,
-      documentId,
+      postingDate: documentDate,
       direction,
       documentType,
-      documentDate,
+      baseAmount: documentNetAmountBase,
+      controlAccountId: postingAccounts.controlAccountId,
       currencyCode,
-      counterpartyId,
-      documentLines: postingDocumentLines,
-      postingLines,
-      journalContext,
-    });
-    ensureBalancedJournalLines(postingLines);
-
-    const journalResult = await insertPostedJournalWithLinesTx(tx, {
-      tenantId,
-      legalEntityId: lockedLegalEntityId,
-      operatingUnitId: documentOperatingUnitId,
-      bookId: journalContext.bookId,
-      fiscalPeriodId: journalContext.fiscalPeriodId,
-      userId: payload.userId,
-      journalNo: buildCariJournalNo("CARI", documentId),
-      entryDate: documentDate,
-      documentDate,
-      currencyCode,
-      description: `Cari ${direction} ${documentType} ${postedNumbering.documentNo}`.slice(
+      subledgerReferenceNo,
+      lineDescription: `Cari tax ${direction} ${documentType} ${postedNumbering.documentNo}`.slice(
         0,
-        500
+        255
       ),
-      referenceNo: toNullableString(postedNumbering.documentNo, 100),
-      lines: postingLines,
-      postedAfterClose: journalContext.wasClosedPeriod,
+      reverseTaxSign: !POSITIVE_SIGN_DOCUMENT_TYPES.has(documentType),
+      includeControlBalancing: false,
+      runQuery: tx.query,
     });
-    await upsertJournalSourceLinkTx(tx, {
-      tenantId,
-      legalEntityId: lockedLegalEntityId,
-      journalEntryId: journalResult.journalEntryId,
-      sourceRefType: "CARI_DOCUMENT",
-      sourceRefId: documentId,
+  const taxAmountTxn = taxAugmentation.lines.length
+    ? sumJournalLineAmountsTxn(taxAugmentation.lines)
+    : normalizeAmount(lockedDocument.tax_amount_txn ?? 0, "taxAmountTxn", {
+      allowZero: true,
     });
+  const taxAmountBase = taxAugmentation.lines.length
+    ? sumJournalLineAmountsBase(taxAugmentation.lines)
+    : normalizeAmount(lockedDocument.tax_amount_base ?? 0, "taxAmountBase", {
+      allowZero: true,
+    });
+  const grossAmountTxn = Number(
+    (documentNetAmountTxn + taxAmountTxn).toFixed(AMOUNT_PRECISION_SCALE)
+  );
+  const grossAmountBase = Number(
+    (documentNetAmountBase + taxAmountBase).toFixed(AMOUNT_PRECISION_SCALE)
+  );
 
-    const paymentTermSnapshot = buildPaymentTermSnapshot(paymentTerm);
-    await tx.query(
-      `UPDATE cari_documents
+  if (taxAugmentation.lines.length > 0) {
+    postingLines.push(...taxAugmentation.lines);
+  }
+  postingLines.push(
+    buildCariDirectionalJournalLine({
+      accountId: postingAccounts.controlAccountId,
+      side: postingSides.controlSide,
+      amountTxn: grossAmountTxn,
+      amountBase: grossAmountBase,
+      lineDescription: defaultLineDescription,
+      subledgerReferenceNo,
+      currencyCode,
+    })
+  );
+  const journalContext = await resolveBookAndOpenPeriodForDate({
+    tenantId,
+    legalEntityId: lockedLegalEntityId,
+    targetDate: documentDate,
+    runQuery: tx.query,
+    assertSoftClosedPermissionFn: () => assertSecondaryPermission(req, "gl.journal.post_to_closed_period"),
+  });
+  const fixedAssetPostingState = await prepareFixedAssetPostingAugmentationsTx({
+    tx,
+    tenantId,
+    legalEntityId: lockedLegalEntityId,
+    documentId,
+    direction,
+    documentType,
+    documentDate,
+    currencyCode,
+    counterpartyId,
+    documentLines: postingDocumentLines,
+    postingLines,
+    journalContext,
+  });
+  ensureBalancedJournalLines(postingLines);
+
+  const journalResult = await insertPostedJournalWithLinesTx(tx, {
+    tenantId,
+    legalEntityId: lockedLegalEntityId,
+    operatingUnitId: documentOperatingUnitId,
+    bookId: journalContext.bookId,
+    fiscalPeriodId: journalContext.fiscalPeriodId,
+    userId: payload.userId,
+    journalNo: buildCariJournalNo("CARI", documentId),
+    entryDate: documentDate,
+    documentDate,
+    currencyCode,
+    description: `Cari ${direction} ${documentType} ${postedNumbering.documentNo}`.slice(
+      0,
+      500
+    ),
+    referenceNo: toNullableString(postedNumbering.documentNo, 100),
+    lines: postingLines,
+    postedAfterClose: journalContext.wasClosedPeriod,
+  });
+  await upsertJournalSourceLinkTx(tx, {
+    tenantId,
+    legalEntityId: lockedLegalEntityId,
+    journalEntryId: journalResult.journalEntryId,
+    sourceRefType: "CARI_DOCUMENT",
+    sourceRefId: documentId,
+  });
+
+  const paymentTermSnapshot = buildPaymentTermSnapshot(paymentTerm);
+  await tx.query(
+    `UPDATE cari_documents
        SET payment_term_id = ?,
            sequence_namespace = ?,
            fiscal_year = ?,
@@ -10086,40 +10165,40 @@ async function postCariDocumentByIdTx(
            posted_at = CURRENT_TIMESTAMP
        WHERE tenant_id = ?
          AND id = ?`,
-      [
-        paymentTermId || null,
-        postedNumbering.sequenceNamespace,
-        postedNumbering.fiscalYear,
-        postedNumbering.sequenceNo,
-        postedNumbering.documentNo,
-        POSTED_STATUS,
-        resolvedDueDate,
-        documentNetAmountTxn,
-        documentNetAmountBase,
-        taxAmountTxn,
-        taxAmountBase,
-        grossAmountTxn,
-        grossAmountBase,
-        grossAmountTxn,
-        grossAmountBase,
-        grossAmountTxn,
-        grossAmountBase,
-        fxPolicy.effectiveFxRate,
-        counterparty.code,
-        counterparty.name,
-        paymentTermSnapshot,
-        resolvedDueDate,
-        currencyCode,
-        fxPolicy.effectiveFxRate,
-        journalResult.journalEntryId,
-        tenantId,
-        documentId,
-      ]
-    );
+    [
+      paymentTermId || null,
+      postedNumbering.sequenceNamespace,
+      postedNumbering.fiscalYear,
+      postedNumbering.sequenceNo,
+      postedNumbering.documentNo,
+      POSTED_STATUS,
+      resolvedDueDate,
+      documentNetAmountTxn,
+      documentNetAmountBase,
+      taxAmountTxn,
+      taxAmountBase,
+      grossAmountTxn,
+      grossAmountBase,
+      grossAmountTxn,
+      grossAmountBase,
+      grossAmountTxn,
+      grossAmountBase,
+      fxPolicy.effectiveFxRate,
+      counterparty.code,
+      counterparty.name,
+      paymentTermSnapshot,
+      resolvedDueDate,
+      currencyCode,
+      fxPolicy.effectiveFxRate,
+      journalResult.journalEntryId,
+      tenantId,
+      documentId,
+    ]
+  );
 
-    const openItemDueDate = resolvedDueDate || documentDate;
-    const openItemInsert = await tx.query(
-      `INSERT INTO cari_open_items (
+  const openItemDueDate = resolvedDueDate || documentDate;
+  const openItemInsert = await tx.query(
+    `INSERT INTO cari_open_items (
           tenant_id,
           legal_entity_id,
           counterparty_id,
@@ -10137,181 +10216,181 @@ async function postCariDocumentByIdTx(
           currency_code
        )
        VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, 0.000000, 0.000000, ?)`,
-      [
-        tenantId,
-        lockedLegalEntityId,
-        counterpartyId,
-        documentId,
-        OPEN_ITEM_STATUS_OPEN,
-        documentDate,
-        openItemDueDate,
-        grossAmountTxn,
-        grossAmountBase,
-        grossAmountTxn,
-        grossAmountBase,
-        currencyCode,
-      ]
-    );
-    const createdOpenItemId = parsePositiveInt(openItemInsert.rows?.insertId);
-    if (!createdOpenItemId) {
-      throw new Error("Document open item create failed");
+    [
+      tenantId,
+      lockedLegalEntityId,
+      counterpartyId,
+      documentId,
+      OPEN_ITEM_STATUS_OPEN,
+      documentDate,
+      openItemDueDate,
+      grossAmountTxn,
+      grossAmountBase,
+      grossAmountTxn,
+      grossAmountBase,
+      currencyCode,
+    ]
+  );
+  const createdOpenItemId = parsePositiveInt(openItemInsert.rows?.insertId);
+  if (!createdOpenItemId) {
+    throw new Error("Document open item create failed");
+  }
+  let autoSettlementBatchId = null;
+  let autoSettlementCashTransactionId = null;
+  if (settlementMode === SETTLEMENT_MODE_IMMEDIATE_CASH) {
+    if (!settlementCashRegisterId) {
+      throw badRequest(
+        "settlementCashRegisterId is required when settlementMode=IMMEDIATE_CASH"
+      );
     }
-    let autoSettlementBatchId = null;
-    let autoSettlementCashTransactionId = null;
-    if (settlementMode === SETTLEMENT_MODE_IMMEDIATE_CASH) {
-      if (!settlementCashRegisterId) {
-        throw badRequest(
-          "settlementCashRegisterId is required when settlementMode=IMMEDIATE_CASH"
-        );
-      }
-      const settlementCashRegister = await findCashRegisterById({
+    const settlementCashRegister = await findCashRegisterById({
+      tenantId,
+      registerId: settlementCashRegisterId,
+      runQuery: tx.query,
+    });
+    if (!settlementCashRegister) {
+      throw badRequest("settlementCashRegisterId not found for tenant");
+    }
+    if (
+      parsePositiveInt(settlementCashRegister.legal_entity_id) !==
+      lockedLegalEntityId
+    ) {
+      throw badRequest("settlementCashRegisterId must belong to legalEntityId");
+    }
+    const cashCreateIdempotencyKey = buildDocumentImmediateCashIdempotencyKey(
+      documentId,
+      "CASH"
+    );
+    const cashCreateEventUid = buildDocumentImmediateCashIdempotencyKey(
+      documentId,
+      "CASH_EVENT"
+    );
+    const cashTransactionResult = await createCashTransactionTx(tx, {
+      req,
+      payload: {
         tenantId,
+        userId: payload.userId,
         registerId: settlementCashRegisterId,
-        runQuery: tx.query,
-      });
-      if (!settlementCashRegister) {
-        throw badRequest("settlementCashRegisterId not found for tenant");
-      }
-      if (
-        parsePositiveInt(settlementCashRegister.legal_entity_id) !==
-        lockedLegalEntityId
-      ) {
-        throw badRequest("settlementCashRegisterId must belong to legalEntityId");
-      }
-      const cashCreateIdempotencyKey = buildDocumentImmediateCashIdempotencyKey(
-        documentId,
-        "CASH"
-      );
-      const cashCreateEventUid = buildDocumentImmediateCashIdempotencyKey(
-        documentId,
-        "CASH_EVENT"
-      );
-      const cashTransactionResult = await createCashTransactionTx(tx, {
-        req,
-        payload: {
-          tenantId,
-          userId: payload.userId,
-          registerId: settlementCashRegisterId,
-          txnType: direction === "AR" ? "RECEIPT" : "PAYOUT",
-          txnDatetime: `${documentDate} 12:00:00`,
-          bookDate: documentDate,
-          amount: grossAmountTxn,
-          amountBase: grossAmountBase,
-          currencyCode,
-          description: `Immediate cash settlement for ${postedNumbering.documentNo}`.slice(
-            0,
-            500
-          ),
-          referenceNo: toNullableString(postedNumbering.documentNo, 100),
-          sourceModule: "CARI",
-          sourceEntityType: "cari_document",
-          sourceEntityId: String(documentId),
-          integrationLinkStatus: "LINKED",
-          counterpartyType: direction === "AR" ? "CUSTOMER" : "VENDOR",
-          counterpartyId,
-          counterAccountId: postingAccounts.controlAccountId,
-          idempotencyKey: cashCreateIdempotencyKey,
-          integrationEventUid: cashCreateEventUid,
-        },
-        assertScopeAccess,
-      });
-      autoSettlementCashTransactionId = parsePositiveInt(
-        cashTransactionResult?.row?.id
-      );
-      if (!autoSettlementCashTransactionId) {
-        throw new Error("Immediate cash transaction create failed");
-      }
+        txnType: direction === "AR" ? "RECEIPT" : "PAYOUT",
+        txnDatetime: `${documentDate} 12:00:00`,
+        bookDate: documentDate,
+        amount: grossAmountTxn,
+        amountBase: grossAmountBase,
+        currencyCode,
+        description: `Immediate cash settlement for ${postedNumbering.documentNo}`.slice(
+          0,
+          500
+        ),
+        referenceNo: toNullableString(postedNumbering.documentNo, 100),
+        sourceModule: "CARI",
+        sourceEntityType: "cari_document",
+        sourceEntityId: String(documentId),
+        integrationLinkStatus: "LINKED",
+        counterpartyType: direction === "AR" ? "CUSTOMER" : "VENDOR",
+        counterpartyId,
+        counterAccountId: postingAccounts.controlAccountId,
+        idempotencyKey: cashCreateIdempotencyKey,
+        integrationEventUid: cashCreateEventUid,
+      },
+      assertScopeAccess,
+    });
+    autoSettlementCashTransactionId = parsePositiveInt(
+      cashTransactionResult?.row?.id
+    );
+    if (!autoSettlementCashTransactionId) {
+      throw new Error("Immediate cash transaction create failed");
+    }
 
-      const settlementIdempotencyKey = buildDocumentImmediateCashIdempotencyKey(
-        documentId,
-        "SETTLE"
-      );
-      const settlementEventUid = buildDocumentImmediateCashIdempotencyKey(
-        documentId,
-        "SETTLE_EVENT"
-      );
-      const settlementResult = await applyCariSettlementTx(tx, {
-        req,
-        payload: {
-          tenantId,
-          userId: payload.userId,
-          legalEntityId: lockedLegalEntityId,
-          operatingUnitId: documentOperatingUnitId,
-          counterpartyId,
-          settlementDate: documentDate,
-          currencyCode,
-          incomingAmountTxn: grossAmountTxn,
-          paymentChannel: "CASH",
-          cashTransactionId: autoSettlementCashTransactionId,
-          useUnappliedCash: false,
-          autoAllocate: false,
-          allocations: [
-            {
-              openItemId: createdOpenItemId,
-              amountTxn: grossAmountTxn,
-            },
-          ],
-          idempotencyKey: settlementIdempotencyKey,
-          integrationEventUid: settlementEventUid,
-          sourceModule: "CARI",
-          sourceEntityType: "cari_document",
-          sourceEntityId: String(documentId),
-          integrationLinkStatus: "LINKED",
-        },
-        assertScopeAccess,
-      });
-      autoSettlementBatchId = parsePositiveInt(settlementResult?.row?.id);
-      autoSettlementCashTransactionId =
-        parsePositiveInt(settlementResult?.cashTransaction?.id) ||
-        autoSettlementCashTransactionId;
-      if (!autoSettlementBatchId || !autoSettlementCashTransactionId) {
-        throw new Error("Immediate cash settlement link failed");
-      }
-      await tx.query(
-        `UPDATE cari_documents
+    const settlementIdempotencyKey = buildDocumentImmediateCashIdempotencyKey(
+      documentId,
+      "SETTLE"
+    );
+    const settlementEventUid = buildDocumentImmediateCashIdempotencyKey(
+      documentId,
+      "SETTLE_EVENT"
+    );
+    const settlementResult = await applyCariSettlementTx(tx, {
+      req,
+      payload: {
+        tenantId,
+        userId: payload.userId,
+        legalEntityId: lockedLegalEntityId,
+        operatingUnitId: documentOperatingUnitId,
+        counterpartyId,
+        settlementDate: documentDate,
+        currencyCode,
+        incomingAmountTxn: grossAmountTxn,
+        paymentChannel: "CASH",
+        cashTransactionId: autoSettlementCashTransactionId,
+        useUnappliedCash: false,
+        autoAllocate: false,
+        allocations: [
+          {
+            openItemId: createdOpenItemId,
+            amountTxn: grossAmountTxn,
+          },
+        ],
+        idempotencyKey: settlementIdempotencyKey,
+        integrationEventUid: settlementEventUid,
+        sourceModule: "CARI",
+        sourceEntityType: "cari_document",
+        sourceEntityId: String(documentId),
+        integrationLinkStatus: "LINKED",
+      },
+      assertScopeAccess,
+    });
+    autoSettlementBatchId = parsePositiveInt(settlementResult?.row?.id);
+    autoSettlementCashTransactionId =
+      parsePositiveInt(settlementResult?.cashTransaction?.id) ||
+      autoSettlementCashTransactionId;
+    if (!autoSettlementBatchId || !autoSettlementCashTransactionId) {
+      throw new Error("Immediate cash settlement link failed");
+    }
+    await tx.query(
+      `UPDATE cari_documents
          SET auto_settlement_batch_id = ?,
              auto_settlement_cash_transaction_id = ?
          WHERE tenant_id = ?
            AND id = ?`,
-        [
-          autoSettlementBatchId,
-          autoSettlementCashTransactionId,
-          tenantId,
-          documentId,
-        ]
-      );
-    }
-    await replaceDocumentLineStockLinksTx(tx, {
-      tenantId,
-      legalEntityId: lockedLegalEntityId,
-      documentId,
-      direction,
-      lines: postingDocumentLines,
-    });
-    await applyFixedAssetPostingSideEffectsTx({
-      tx,
-      tenantId,
-      legalEntityId: lockedLegalEntityId,
-      documentId,
-      documentNo: postedNumbering.documentNo,
-      documentDate,
-      direction,
-      currencyCode,
-      counterpartyId,
-      documentLines: postingDocumentLines,
-      journalEntryId: journalResult.journalEntryId,
-      journalContext,
-      userId: payload.userId,
-      fixedAssetPostingState,
-    });
-    if (
-      postingWorkflowContext.workflowGate?.assignmentResolved &&
-      parsePositiveInt(postingWorkflowContext.workflowGate?.workflowInstanceId)
-    ) {
-      // Explicit POST is the terminal AP action-step, so the legacy workflow
-      // instance resolves only after posting succeeds.
-      await tx.query(
-        `UPDATE workflow_instances
+      [
+        autoSettlementBatchId,
+        autoSettlementCashTransactionId,
+        tenantId,
+        documentId,
+      ]
+    );
+  }
+  await replaceDocumentLineStockLinksTx(tx, {
+    tenantId,
+    legalEntityId: lockedLegalEntityId,
+    documentId,
+    direction,
+    lines: postingDocumentLines,
+  });
+  await applyFixedAssetPostingSideEffectsTx({
+    tx,
+    tenantId,
+    legalEntityId: lockedLegalEntityId,
+    documentId,
+    documentNo: postedNumbering.documentNo,
+    documentDate,
+    direction,
+    currencyCode,
+    counterpartyId,
+    documentLines: postingDocumentLines,
+    journalEntryId: journalResult.journalEntryId,
+    journalContext,
+    userId: payload.userId,
+    fixedAssetPostingState,
+  });
+  if (
+    postingWorkflowContext.workflowGate?.assignmentResolved &&
+    parsePositiveInt(postingWorkflowContext.workflowGate?.workflowInstanceId)
+  ) {
+    // Explicit POST is the terminal AP action-step, so the legacy workflow
+    // instance resolves only after posting succeeds.
+    await tx.query(
+      `UPDATE workflow_instances
             SET status = 'APPROVED',
                 current_step_no = ?,
                 resolved_at = COALESCE(resolved_at, CURRENT_TIMESTAMP),
@@ -10322,106 +10401,106 @@ async function postCariDocumentByIdTx(
                 updated_at = CURRENT_TIMESTAMP
           WHERE tenant_id = ?
             AND id = ?`,
-        [
-          Math.max(1, Number(postingWorkflowContext.workflowGate?.currentStepNo || 1)),
-          tenantId,
-          parsePositiveInt(postingWorkflowContext.workflowGate?.workflowInstanceId),
-        ]
-      );
-    }
+      [
+        Math.max(1, Number(postingWorkflowContext.workflowGate?.currentStepNo || 1)),
+        tenantId,
+        parsePositiveInt(postingWorkflowContext.workflowGate?.workflowInstanceId),
+      ]
+    );
+  }
 
-    const row = await fetchDocumentRow({
-      tenantId,
-      documentId,
-      runQuery: tx.query,
-    });
-    if (!row) {
-      throw new Error("Document post readback failed");
-    }
+  const row = await fetchDocumentRow({
+    tenantId,
+    documentId,
+    runQuery: tx.query,
+  });
+  if (!row) {
+    throw new Error("Document post readback failed");
+  }
 
+  await insertAuditLog({
+    req,
+    runQuery: tx.query,
+    tenantId,
+    userId: payload.userId,
+    action: "cari.document.post",
+    legalEntityId: lockedLegalEntityId,
+    documentId,
+    payload: {
+      status: row.status,
+      sequenceNamespace: row.sequence_namespace,
+      fiscalYear: Number(row.fiscal_year),
+      sequenceNo: Number(row.sequence_no),
+      documentNo: row.document_no,
+      postedJournalEntryId: journalResult.journalEntryId,
+      subledgerReferenceNo,
+      controlAccountCode: postingAccounts.controlAccountCode || null,
+      offsetAccountCode: postingAccounts.offsetAccountCode || null,
+      offsetAccountOverrideProvided: Boolean(
+        payload.offsetAccountId ||
+        String(payload.offsetAccountCode || "").trim() ||
+        postingLinesUseLineLevelOffsets
+      ),
+      postingLines: postingLineSummary,
+      postingLinesUseLineLevelOffsets,
+      fxRate: fxPolicy.effectiveFxRate,
+      tax: taxAugmentation.summary,
+      settlementMode,
+      autoSettlementBatchId,
+      autoSettlementCashTransactionId,
+      workflowGate: postingWorkflowContext.workflowGate,
+    },
+  });
+
+  if (fxPolicy.overrideUsed) {
     await insertAuditLog({
       req,
       runQuery: tx.query,
       tenantId,
       userId: payload.userId,
-      action: "cari.document.post",
+      action: "cari.document.post.fx_override",
       legalEntityId: lockedLegalEntityId,
       documentId,
       payload: {
-        status: row.status,
-        sequenceNamespace: row.sequence_namespace,
-        fiscalYear: Number(row.fiscal_year),
-        sequenceNo: Number(row.sequence_no),
-        documentNo: row.document_no,
-        postedJournalEntryId: journalResult.journalEntryId,
-        subledgerReferenceNo,
-        controlAccountCode: postingAccounts.controlAccountCode || null,
-        offsetAccountCode: postingAccounts.offsetAccountCode || null,
-        offsetAccountOverrideProvided: Boolean(
-          payload.offsetAccountId ||
-            String(payload.offsetAccountCode || "").trim() ||
-            postingLinesUseLineLevelOffsets
+        reason: payload.fxOverrideReason || null,
+        documentDate,
+        documentCurrencyCode: currencyCode,
+        functionalCurrencyCode: normalizeUpperText(
+          legalEntity.functional_currency_code
         ),
-        postingLines: postingLineSummary,
-        postingLinesUseLineLevelOffsets,
-        fxRate: fxPolicy.effectiveFxRate,
-        tax: taxAugmentation.summary,
-        settlementMode,
-        autoSettlementBatchId,
-        autoSettlementCashTransactionId,
-        workflowGate: postingWorkflowContext.workflowGate,
+        referenceFxRate: fxPolicy.referenceFxRate,
+        overriddenFxRate: fxPolicy.effectiveFxRate,
+        fxRateDate: fxPolicy.fxRateDate,
       },
     });
+  }
+  const lines = await loadDocumentLinesForDocument({
+    tenantId,
+    legalEntityId: lockedLegalEntityId,
+    documentId,
+    runQuery: tx.query,
+  });
 
-    if (fxPolicy.overrideUsed) {
-      await insertAuditLog({
-        req,
-        runQuery: tx.query,
-        tenantId,
-        userId: payload.userId,
-        action: "cari.document.post.fx_override",
-        legalEntityId: lockedLegalEntityId,
-        documentId,
-        payload: {
-          reason: payload.fxOverrideReason || null,
-          documentDate,
-          documentCurrencyCode: currencyCode,
-          functionalCurrencyCode: normalizeUpperText(
-            legalEntity.functional_currency_code
-          ),
-          referenceFxRate: fxPolicy.referenceFxRate,
-          overriddenFxRate: fxPolicy.effectiveFxRate,
-          fxRateDate: fxPolicy.fxRateDate,
-        },
-      });
-    }
-    const lines = await loadDocumentLinesForDocument({
+  return {
+    row: await mapDocumentRowWithWorkflowGate(row, {
+      lines,
       tenantId,
-      legalEntityId: lockedLegalEntityId,
-      documentId,
       runQuery: tx.query,
-    });
-
-    return {
-      row: await mapDocumentRowWithWorkflowGate(row, {
-        lines,
-        tenantId,
-        runQuery: tx.query,
-      }),
-      journal: {
-        journalEntryId: journalResult.journalEntryId,
-        bookId: journalContext.bookId,
-        fiscalPeriodId: journalContext.fiscalPeriodId,
-        lineCount: journalResult.lineCount,
-        totalDebit: journalResult.totalDebit,
-        totalCredit: journalResult.totalCredit,
-        subledgerReferenceNo,
-        tax: taxAugmentation.summary,
-        settlementMode,
-        autoSettlementBatchId,
-        autoSettlementCashTransactionId,
-      },
-    };
+    }),
+    journal: {
+      journalEntryId: journalResult.journalEntryId,
+      bookId: journalContext.bookId,
+      fiscalPeriodId: journalContext.fiscalPeriodId,
+      lineCount: journalResult.lineCount,
+      totalDebit: journalResult.totalDebit,
+      totalCredit: journalResult.totalCredit,
+      subledgerReferenceNo,
+      tax: taxAugmentation.summary,
+      settlementMode,
+      autoSettlementBatchId,
+      autoSettlementCashTransactionId,
+    },
+  };
 }
 
 export async function postCariDocumentById({
@@ -10570,7 +10649,7 @@ function canReversePostedCariDocument(row) {
   return (
     status === SETTLED_STATUS &&
     normalizeDocumentSettlementMode(row?.settlement_mode, SETTLEMENT_MODE_ACCRUAL) ===
-      SETTLEMENT_MODE_IMMEDIATE_CASH &&
+    SETTLEMENT_MODE_IMMEDIATE_CASH &&
     parsePositiveInt(row?.auto_settlement_batch_id) &&
     parsePositiveInt(row?.auto_settlement_cash_transaction_id)
   );
@@ -11073,27 +11152,27 @@ export async function reverseCariPostedDocumentById({
             fixedAssetTag: toNullableString(line.fixedAssetTag, 100),
             improvementEffectiveDate: line.improvementEffectiveDate
               ? toDateOnlyString(
-                  line.improvementEffectiveDate,
-                  "reversalLine.improvementEffectiveDate"
-                )
+                line.improvementEffectiveDate,
+                "reversalLine.improvementEffectiveDate"
+              )
               : null,
             revisedUsefulLifeMonths: parsePositiveInt(line.revisedUsefulLifeMonths),
             lifeExtensionMonths: parsePositiveInt(line.lifeExtensionMonths),
             chargeTargets: Array.isArray(line.chargeTargets)
               ? line.chargeTargets.map((target) => ({
-                  targetLineNo: parsePositiveInt(target.targetLineNo),
-                  allocatedAmountTxn:
-                    target.allocatedAmountTxn === null ||
+                targetLineNo: parsePositiveInt(target.targetLineNo),
+                allocatedAmountTxn:
+                  target.allocatedAmountTxn === null ||
                     target.allocatedAmountTxn === undefined
-                      ? null
-                      : normalizeAmount(
-                          target.allocatedAmountTxn,
-                          "reversalLine.chargeTargets.allocatedAmountTxn",
-                          {
-                            allowZero: true,
-                          }
-                        ),
-                }))
+                    ? null
+                    : normalizeAmount(
+                      target.allocatedAmountTxn,
+                      "reversalLine.chargeTargets.allocatedAmountTxn",
+                      {
+                        allowZero: true,
+                      }
+                    ),
+              }))
               : [],
             taxes: (line.taxes || []).map((tax) => ({
               componentNo: Number(tax.componentNo || 0),
