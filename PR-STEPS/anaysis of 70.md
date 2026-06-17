@@ -1,275 +1,175 @@
-Checked `project3.zip`. **PR-CTM-01 and PR-CTM-02 look good. PR-CTM-03 is mostly implemented, but there is one blocker bug before moving to PR-CTM-04.** The implemented scope matches the final plan’s expected schema/permission/route/service direction.
+Checked `project4.zip`. Overall verdict: **PR-CTM-04 is mostly implemented correctly and the earlier PR-CTM-03 cycle-status blocker is fixed.** The materialization architecture is in place. But I found **two plan-alignment issues** you should fix or explicitly accept before moving to PR-CTM-05. The final plan requires deterministic template materialization, tenant override suppression, default shipped templates, PLANNED-cycle provisioning, and idempotent reprovisioning.
 
 ## Verdict
 
 ```txt
 PR-CTM-01: OK
 PR-CTM-02: OK
-PR-CTM-03: Mostly OK, but fix 1 blocker
+PR-CTM-03: OK after previous cycle_status fix
+PR-CTM-04: Mostly OK, but fix/decide 2 items before PR-CTM-05
 ```
 
-Do **not** continue to provisioning/materialization yet until the cycle-status guard bug below is fixed.
+## What looks good
 
----
-
-## Good things I confirmed
-
-### 1. Schema is implemented and registered
-
-These migrations exist and are registered:
+The following PR-CTM-04 pieces are implemented:
 
 ```txt
-m203_close_task_management_foundation.js
-m204_evidence_comments_generic_scope_for_close_tasks.js
-m205_close_alerts_generic_subject.js
-m206_evidence_comments_nullable_legal_entity_scope.js
-```
-
-`m206` is extra compared with the plan, but it is good because it completes the generic-scope path by making legacy `legal_entity_id` nullable for evidence/comments.
-
-### 2. Source-ref registry gap is fixed
-
-Backend now has:
-
-```js
-LOCAL_CLOSE_PACK;
-CLOSE_TASK_INSTANCE;
-```
-
-Frontend also has:
-
-```js
-LOCAL_CLOSE_PACK;
-CLOSE_TASK_INSTANCE;
-```
-
-That previous gap is fixed.
-
-### 3. PR-CTM-03 files exist
-
-These are implemented:
-
-```txt
-backend/src/routes/close.tasks.routes.js
-backend/src/routes/close.tasks.validators.js
-backend/src/services/close.tasks.service.js
 backend/src/services/close.task-templates.service.js
-backend/src/services/close.task-evidence.service.js
-backend/src/services/close.task-comments.service.js
-backend/src/services/close.task-scope.service.js
-backend/src/services/close.task-source-checks.service.js
-backend/src/services/close.task-events.service.js
+backend/src/services/close.tasks.service.js
+backend/scripts/backfill-close-task-defaults.js
+backend/scripts/test-close-task-materialization.js
 ```
 
-Route registration is also present in:
+The default template catalog exists, including:
 
 ```txt
-backend/src/index.js
+BANK_RECON_COMPLETED
+CASH_RECON_COMPLETED
+INVENTORY_NEGATIVE_STOCK_CHECK
+AP_UNPOSTED_CLEARED
+AR_AGING_REVIEWED
+PAYROLL_POSTED
+IC_133_333_MATCHED
+FX_RATES_ENTERED
+DEPRECIATION_POSTED
+TRIAL_BALANCE_REVIEWED
+ENTITY_CLOSE_CERTIFIED
 ```
 
-OpenAPI has close-task paths and `CANCELLED` enum entries.
-
-### 4. The route surface matches the plan
-
-Implemented routes include:
+Materialization is connected into:
 
 ```txt
-/task-templates
-/tasks
-/cycles/:cycleId/tasks
-/tasks/:taskId/start
-/tasks/:taskId/submit
-/tasks/:taskId/return
-/tasks/:taskId/approve
-/tasks/:taskId/waive
-/tasks/:taskId/cancel
-/tasks/:taskId/reopen
-/tasks/:taskId/refresh-source-check
-/tasks/:taskId/events
-/tasks/:taskId/evidence
-/tasks/:taskId/comments
+backend/src/services/close.cycles.service.js
 ```
 
-### 5. PR-CTM-03 contract shape is good
-
-The service layer has:
+for both:
 
 ```txt
-submit
-return
-approve
-waive
-cancel
-reopen
-refresh-source-check
-evidence attach/remove
-comment create/delete
-event writes
-audit log writes for sensitive lifecycle actions
+initial provisioning
+open-cycle reprovisioning
 ```
 
-The cancellation logic is also aligned with the final guardrail:
-
-```txt
-lock-required task cancellation requires close.task.admin
-creator shortcut only applies to non-lock-required manual tasks before submission
-```
-
-Good.
-
----
-
-# Blocker bug to fix before PR-CTM-04
-
-## Cycle-status guard reads the task status instead of the cycle status
-
-In `loadCloseTaskWithCycle()`, the query selects:
-
-```sql
-cti.*,
-cc.status AS cycle_status
-```
-
-So the task row has both:
-
-```txt
-status         = task lifecycle status
-cycle_status  = close cycle status
-```
-
-But `assertCloseTaskCycleEditable()` currently checks:
+The earlier PR-CTM-03 bug is fixed. `assertCloseTaskCycleEditable()` now correctly checks:
 
 ```js
-const status = toUpperText(cycleRow?.status);
+cycle_status ?? cycleStatus ?? status;
 ```
 
-That works when you pass an actual `close_cycles` row.
+so task lifecycle actions no longer confuse task status with close-cycle status.
 
-But PR-CTM-03 often passes a **task row** into this function:
+Also good: `m206_evidence_comments_nullable_legal_entity_scope.js` is present. That completes the generic evidence/comment scope path better than the original plan, because country/group task evidence/comments can now work without forcing `legal_entity_id`.
 
-```js
-assertCloseTaskCycleEditable(current, "Update close task");
-assertCloseTaskCycleEditable(current, eventType);
-assertCloseTaskCycleEditable(task, "Attach task evidence");
-assertCloseTaskCycleEditable(task, "Remove task evidence");
-assertCloseTaskCycleEditable(current, "Refresh source check");
-```
+## Issue 1 — Default template `completion_mode` does not match the final plan
 
-For those calls, `current.status` is not `OPEN`. It is usually:
+The plan says several templates should be `SYSTEM_CHECK`, `SOURCE_STATUS`, or `MANUAL`.
+
+But the implementation currently makes most of them `HYBRID_REVIEW`.
+
+### Mismatches
+
+| Template                 |            Plan |    Current code |
+| ------------------------ | --------------: | --------------: |
+| `AP_UNPOSTED_CLEARED`    |  `SYSTEM_CHECK` | `HYBRID_REVIEW` |
+| `AR_AGING_REVIEWED`      |        `MANUAL` | `HYBRID_REVIEW` |
+| `PAYROLL_POSTED`         | `SOURCE_STATUS` | `HYBRID_REVIEW` |
+| `FX_RATES_ENTERED`       |  `SYSTEM_CHECK` | `HYBRID_REVIEW` |
+| `DEPRECIATION_POSTED`    | `SOURCE_STATUS` | `HYBRID_REVIEW` |
+| `TRIAL_BALANCE_REVIEWED` |        `MANUAL` | `HYBRID_REVIEW` |
+
+This is not a database-breaking issue, but it is a **plan mismatch**.
+
+### My recommendation
+
+Fix the code to match the plan:
 
 ```txt
-NOT_STARTED
-IN_PROGRESS
-SUBMITTED
-RETURNED
-APPROVED
-WAIVED
-CANCELLED
+AP_UNPOSTED_CLEARED              SYSTEM_CHECK
+AR_AGING_REVIEWED                MANUAL
+PAYROLL_POSTED                   SOURCE_STATUS
+FX_RATES_ENTERED                 SYSTEM_CHECK
+DEPRECIATION_POSTED              SOURCE_STATUS
+TRIAL_BALANCE_REVIEWED           MANUAL
 ```
 
-So routine actions will incorrectly fail with:
+Then add assertions to:
 
 ```txt
-requires an OPEN close cycle
+backend/scripts/test-close-task-materialization.js
 ```
 
-even when the actual close cycle is open.
+so this does not drift again.
 
-## Fix
+If you intentionally changed them all to `HYBRID_REVIEW`, then update the plan and test accordingly. Do not leave code and plan inconsistent.
 
-Change `assertCloseTaskCycleEditable()` to prefer `cycle_status` when available:
+## Issue 2 — `LOCAL_CLOSE_PACK_REVIEWER` strategy is not really implemented yet
+
+The plan supports:
+
+```txt
+default_reviewer_strategy = LOCAL_CLOSE_PACK_REVIEWER
+```
+
+But the implementation currently resolves that to the cycle owner:
 
 ```js
-export function assertCloseTaskCycleEditable(
-  cycleRow,
-  actionLabel = "task mutation",
-) {
-  const status = toUpperText(cycleRow?.cycle_status ?? cycleRow?.status);
-
-  if (!CLOSE_TASK_EDITABLE_CYCLE_STATUSES.includes(status)) {
-    const err = new Error(`${actionLabel} requires an OPEN close cycle`);
-    err.status = 409;
-    err.code = "CLOSE_TASK_CYCLE_NOT_EDITABLE";
-    err.details = { cycleStatus: status || null };
-    throw err;
-  }
+if (normalized === "LOCAL_CLOSE_PACK_REVIEWER") {
+  return readPositiveInt(cycle, "owner_user_id", "ownerUserId");
 }
 ```
 
-Then add a regression test:
+That means if a template later uses `LOCAL_CLOSE_PACK_REVIEWER`, it will not actually assign the local close pack reviewer.
 
-```js
-assert.doesNotThrow(() =>
-  assertCloseTaskCycleEditable(
-    { status: "NOT_STARTED", cycle_status: "OPEN" },
-    "Submit task",
-  ),
-);
+This is not breaking current defaults, because the default shipped templates mostly use `CYCLE_OWNER` as reviewer. But it will become a problem when template admin is exposed.
 
-assert.throws(() =>
-  assertCloseTaskCycleEditable(
-    { status: "NOT_STARTED", cycle_status: "LOCKED" },
-    "Submit task",
-  ),
-);
-```
+### Fix
 
-This is the only real blocker I found.
+Either:
 
----
+1. Load `reviewer_user_id` from `local_close_packs` when the cycle item is linked to a local close pack, or
+2. Do not expose `LOCAL_CLOSE_PACK_REVIEWER` in template admin until it is really wired.
 
-## Smaller follow-up items
-
-### 1. Comment audit is not complete yet
-
-`COMMENT_ADDED` writes to `close_task_events`, but it is not included in `CLOSE_TASK_AUDITED_EVENT_TYPES`.
-
-That may be acceptable if you intend to harden comments in PR-CTM-07, but since comment routes already exist, I would add `COMMENT_ADDED` to central audit now or clearly mark it as PR-CTM-07.
-
-### 2. Comment delete does not write a task event
-
-`createCloseTaskComment()` writes `COMMENT_ADDED`.
-
-`deleteCloseTaskComment()` currently soft-deletes the comment but does not write a task event.
-
-Not a blocker for PR-CTM-03, but PR-CTM-07 should add either:
+Better fix:
 
 ```txt
-COMMENT_DELETED
+When item.currentSourceTargetType = LOCAL_CLOSE_PACK
+and item.currentSourceTargetId is present,
+load local_close_packs.reviewer_user_id
+and use it for LOCAL_CLOSE_PACK_REVIEWER.
 ```
 
-or at least an audit log entry.
+## Operational note — default templates require backfill
 
-### 3. Evidence upload/download are placeholders
-
-These currently return `501 NOT_IMPLEMENTED`.
-
-That is okay because storage adapter work belongs to PR-CTM-07, but the frontend should not expose upload/download as working yet.
-
-### 4. I could not run all tests from the zip
-
-These passed:
+The default templates are not inserted by the migration itself. They are inserted through:
 
 ```bash
-npm run test:close-tasks:source-refs
-npm run test:close-tasks:generic-scope-backfill
+npm run backfill:close-task-defaults
 ```
 
-This failed only because dependencies are not installed in the extracted zip:
+That is okay, but make sure this is included in your rollout order.
 
-```bash
-npm run test:close-tasks:prctm03
+Otherwise, provisioning will work technically, but it will create:
+
+```txt
+activeTemplateCount = 0
+plannedTaskCount = 0
+createdTaskCount = 0
 ```
 
-Error:
+because no template rows exist yet.
+
+## Tests
+
+I could not fully run the Node tests from the zip because dependencies are not installed in the extracted project. The failure was:
 
 ```txt
 Cannot find package 'mysql2'
 ```
 
-And scope/SoD tests similarly need installed dependencies such as `redis`.
+That is expected for a raw uploaded zip without `node_modules`.
 
-After `npm install`, run:
+Static syntax checks passed for the relevant PR-CTM-04 files.
+
+After installing dependencies, run:
 
 ```bash
 cd backend
@@ -278,22 +178,22 @@ npm run test:close-tasks:generic-scope-backfill
 npm run test:close-tasks:scope
 npm run test:close-tasks:sod
 npm run test:close-tasks:prctm03
+npm run test:close-tasks:materialization
 ```
 
----
+Also run the backfill before testing real provisioning:
+
+```bash
+npm run backfill:close-task-defaults
+```
 
 ## Final assessment
 
-The implementation is **good overall**.
-
-But fix this before continuing:
+You can continue after handling these two items:
 
 ```txt
-assertCloseTaskCycleEditable must check cycle_status when a joined task row is passed.
+1. Align default template completion_mode values with the final plan, or update the plan intentionally.
+2. Wire LOCAL_CLOSE_PACK_REVIEWER correctly, or hide it until wired.
 ```
 
-After that fix, I would consider PR-CTM-01/02/03 acceptable and safe to continue into:
-
-```txt
-PR-CTM-04 - Template materialization during close-cycle provisioning
-```
+Other than those, PR-CTM-04 is structurally good. The implementation still respects the main architecture rule: **close tasks are being materialized on top of close cycles and close-cycle items, not replacing the existing close engine.**

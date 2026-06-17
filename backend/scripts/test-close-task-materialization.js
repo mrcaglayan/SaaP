@@ -39,6 +39,27 @@ async function main() {
     CLOSE_TASK_DEFAULT_TEMPLATE_DEFINITIONS.map((template) => template.taskCode),
     expectedDefaultCodes,
   );
+  const defaultTemplateByCode = new Map(
+    CLOSE_TASK_DEFAULT_TEMPLATE_DEFINITIONS.map((template) => [template.taskCode, template]),
+  );
+  const expectedCompletionModes = {
+    BANK_RECON_COMPLETED: "HYBRID_REVIEW",
+    CASH_RECON_COMPLETED: "HYBRID_REVIEW",
+    INVENTORY_NEGATIVE_STOCK_CHECK: "SYSTEM_CHECK",
+    AP_UNPOSTED_CLEARED: "SYSTEM_CHECK",
+    AR_AGING_REVIEWED: "MANUAL",
+    PAYROLL_POSTED: "SOURCE_STATUS",
+    IC_133_333_MATCHED: "HYBRID_REVIEW",
+    FX_RATES_ENTERED: "SYSTEM_CHECK",
+    DEPRECIATION_POSTED: "SOURCE_STATUS",
+    TRIAL_BALANCE_REVIEWED: "MANUAL",
+    ENTITY_CLOSE_CERTIFIED: "MANUAL_WITH_EVIDENCE",
+  };
+  for (const [taskCode, completionMode] of Object.entries(expectedCompletionModes)) {
+    assert.equal(defaultTemplateByCode.get(taskCode)?.completionMode, completionMode);
+  }
+  assert.equal(defaultTemplateByCode.get("AR_AGING_REVIEWED")?.sourceCheckCode, null);
+  assert.equal(defaultTemplateByCode.get("TRIAL_BALANCE_REVIEWED")?.sourceCheckCode, null);
   assert(
     CLOSE_TASK_DEFAULT_TEMPLATE_DEFINITIONS.every(
       (template) => template.requiredForCycleLock === false,
@@ -153,6 +174,32 @@ async function main() {
   assert.equal(
     legalEntityByKey.get("ENTITY_CLOSE_CERTIFIED:LEGAL_ENTITY:12").dueAt,
     "2026-04-30 18:00:00",
+  );
+
+  const localReviewerTemplate = {
+    ...defaultTemplateByCode.get("BANK_RECON_COMPLETED"),
+    taskCode: "BANK_RECON_REVIEWER_TEST",
+    defaultReviewerStrategy: "LOCAL_CLOSE_PACK_REVIEWER",
+  };
+  const reviewerCandidates = buildCloseTaskMaterializationCandidates({
+    cycle: legalEntityCycle,
+    cycleItems,
+    templates: [localReviewerTemplate],
+    legalEntityContextById,
+    localClosePackReviewerById: new Map([
+      [400, 77],
+      [401, 78],
+    ]),
+  });
+  const reviewerByKey = byTaskKey(reviewerCandidates);
+  assert.equal(reviewerCandidates.length, 2);
+  assert.equal(
+    reviewerByKey.get("BANK_RECON_REVIEWER_TEST:LOCAL_CLOSE_PACK:400").reviewerUserId,
+    77,
+  );
+  assert.equal(
+    reviewerByKey.get("BANK_RECON_REVIEWER_TEST:LOCAL_CLOSE_PACK:401").reviewerUserId,
+    78,
   );
 
   const groupCandidates = buildCloseTaskMaterializationCandidates({

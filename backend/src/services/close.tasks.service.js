@@ -143,6 +143,24 @@ function collectMaterializationLegalEntityIds(cycle, cycleItems = []) {
   return Array.from(ids);
 }
 
+function collectMaterializationLocalClosePackIds(cycleItems = []) {
+  const ids = new Set();
+  for (const item of cycleItems || []) {
+    if (readUpperText(item, "current_source_target_type", "currentSourceTargetType") !== "LOCAL_CLOSE_PACK") {
+      continue;
+    }
+    const localClosePackId = readPositiveInt(
+      item,
+      "current_source_target_id",
+      "currentSourceTargetId",
+    );
+    if (localClosePackId) {
+      ids.add(localClosePackId);
+    }
+  }
+  return Array.from(ids);
+}
+
 async function loadLegalEntityContextById({ tenantId, legalEntityIds = [], runQuery = query }) {
   const ids = Array.from(new Set((legalEntityIds || []).map(parsePositiveInt).filter(Boolean)));
   if (ids.length === 0) {
@@ -170,11 +188,53 @@ async function loadLegalEntityContextById({ tenantId, legalEntityIds = [], runQu
   return byId;
 }
 
-function buildMaterializationContext({ cycle, item = null, legalEntityContextById = new Map() }) {
+async function loadLocalClosePackReviewerById({
+  tenantId,
+  localClosePackIds = [],
+  runQuery = query,
+}) {
+  const ids = Array.from(new Set((localClosePackIds || []).map(parsePositiveInt).filter(Boolean)));
+  if (ids.length === 0) {
+    return new Map();
+  }
+  const result = await runQuery(
+    `SELECT id, reviewer_user_id
+     FROM local_close_packs
+     WHERE tenant_id = ?
+       AND id IN (${ids.map(() => "?").join(", ")})`,
+    [parsePositiveInt(tenantId), ...ids],
+  );
+  const byId = new Map();
+  for (const row of result.rows || []) {
+    const id = parsePositiveInt(row.id);
+    if (!id) {
+      continue;
+    }
+    byId.set(id, parsePositiveInt(row.reviewer_user_id));
+  }
+  return byId;
+}
+
+function buildMaterializationContext({
+  cycle,
+  item = null,
+  legalEntityContextById = new Map(),
+  localClosePackReviewerById = new Map(),
+}) {
   const legalEntityId =
     readPositiveInt(item, "legal_entity_id", "legalEntityId") ||
     readPositiveInt(cycle, "legal_entity_id", "legalEntityId");
   const entityContext = legalEntityId ? legalEntityContextById.get(legalEntityId) || {} : {};
+  const currentSourceTargetType = readUpperText(
+    item,
+    "current_source_target_type",
+    "currentSourceTargetType",
+  );
+  const currentSourceTargetId = readPositiveInt(
+    item,
+    "current_source_target_id",
+    "currentSourceTargetId",
+  );
   return {
     cycleId: readPositiveInt(cycle, "id"),
     fiscalPeriodId: readPositiveInt(cycle, "fiscal_period_id", "fiscalPeriodId"),
@@ -196,16 +256,12 @@ function buildMaterializationContext({ cycle, item = null, legalEntityContextByI
     closeCycleItemId: readPositiveInt(item, "id"),
     itemType: readUpperText(item, "item_type", "itemType"),
     itemOwnerUserId: readPositiveInt(item, "owner_user_id", "ownerUserId"),
-    currentSourceTargetType: readUpperText(
-      item,
-      "current_source_target_type",
-      "currentSourceTargetType",
-    ),
-    currentSourceTargetId: readPositiveInt(
-      item,
-      "current_source_target_id",
-      "currentSourceTargetId",
-    ),
+    currentSourceTargetType,
+    currentSourceTargetId,
+    localClosePackReviewerUserId:
+      currentSourceTargetType === "LOCAL_CLOSE_PACK"
+        ? parsePositiveInt(localClosePackReviewerById.get(currentSourceTargetId))
+        : null,
   };
 }
 
@@ -297,7 +353,10 @@ function resolveMaterializedTaskAssignment(strategy, cycle, context) {
     return context.itemOwnerUserId || readPositiveInt(cycle, "owner_user_id", "ownerUserId");
   }
   if (normalized === "LOCAL_CLOSE_PACK_REVIEWER") {
-    return readPositiveInt(cycle, "owner_user_id", "ownerUserId");
+    return (
+      context.localClosePackReviewerUserId ||
+      readPositiveInt(cycle, "owner_user_id", "ownerUserId")
+    );
   }
   return null;
 }
@@ -359,8 +418,19 @@ function templateAppliesToItem(template, item) {
   return anchorItemType === "ANY" || anchorItemType === itemType;
 }
 
-function buildMaterializedTaskCandidate({ template, cycle, item = null, legalEntityContextById }) {
-  const context = buildMaterializationContext({ cycle, item, legalEntityContextById });
+function buildMaterializedTaskCandidate({
+  template,
+  cycle,
+  item = null,
+  legalEntityContextById,
+  localClosePackReviewerById,
+}) {
+  const context = buildMaterializationContext({
+    cycle,
+    item,
+    legalEntityContextById,
+    localClosePackReviewerById,
+  });
   const rbacScope = resolveRbacScopeForMaterializedTask(template, context);
   const workScope = resolveWorkScopeForMaterializedTask(template, context);
   if (!rbacScope || !workScope) {
@@ -421,6 +491,7 @@ export function buildCloseTaskMaterializationCandidates({
   cycleItems = [],
   templates = [],
   legalEntityContextById = new Map(),
+  localClosePackReviewerById = new Map(),
 } = {}) {
   const cycleScopeKind = readUpperText(cycle, "scope_kind", "scopeKind");
   const byTaskKey = new Map();
@@ -441,6 +512,7 @@ export function buildCloseTaskMaterializationCandidates({
         template,
         cycle,
         legalEntityContextById,
+        localClosePackReviewerById,
       });
       if (candidate && !byTaskKey.has(candidate.taskKey)) {
         byTaskKey.set(candidate.taskKey, candidate);
@@ -460,6 +532,7 @@ export function buildCloseTaskMaterializationCandidates({
         cycle,
         item,
         legalEntityContextById,
+        localClosePackReviewerById,
       });
       if (candidate && !byTaskKey.has(candidate.taskKey)) {
         byTaskKey.set(candidate.taskKey, candidate);
@@ -709,11 +782,17 @@ export async function materializeCloseTasksForCycle(cycleId, actorCtx = {}) {
     legalEntityIds: collectMaterializationLegalEntityIds(cycle, cycleItems),
     runQuery,
   });
+  const localClosePackReviewerById = await loadLocalClosePackReviewerById({
+    tenantId,
+    localClosePackIds: collectMaterializationLocalClosePackIds(cycleItems),
+    runQuery,
+  });
   const candidates = buildCloseTaskMaterializationCandidates({
     cycle,
     cycleItems,
     templates: activeTemplates,
     legalEntityContextById,
+    localClosePackReviewerById,
   });
   const existingKeys = await loadExistingCloseTaskKeysForCycle({
     tenantId,

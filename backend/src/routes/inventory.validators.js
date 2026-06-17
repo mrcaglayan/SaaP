@@ -161,6 +161,10 @@ export function parseInventoryWarehouseUpsertInput(req) {
   };
 }
 
+export function parseInventoryWarehouseCreateInput(req) {
+  return parseInventoryWarehouseUpsertInput(req);
+}
+
 /**
  * Parse stock-link list filters, including optional OU scoping for branch reads.
  */
@@ -174,15 +178,15 @@ export function parseInventoryStockLinkListFilters(req) {
     operatingUnitId: normalizeOptionalPositiveInt(req.query?.operatingUnitId, "operatingUnitId"),
     queueScope: queueScopeRaw
       ? normalizeEnum(queueScopeRaw, "queueScope", STOCK_LINK_QUEUE_SCOPE_VALUES, {
-          required: true,
-        })
+        required: true,
+      })
       : linkStatusRaw
         ? null
         : "ACTIONABLE",
     linkStatus: linkStatusRaw
       ? normalizeEnum(linkStatusRaw, "linkStatus", STOCK_LINK_STATUS_VALUES, {
-          required: true,
-        })
+        required: true,
+      })
       : null,
     stockImpactMode:
       normalizeEnum(
