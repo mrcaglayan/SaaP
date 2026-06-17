@@ -2,15 +2,22 @@ function freezeScopeTypes(scopeTypes) {
   return Object.freeze([...scopeTypes]);
 }
 
-// Consolidation workflow approvals can legitimately follow different review
-// ladders across org models, including COUNTRY -> GROUP, so the shared policy
-// must allow COUNTRY wherever consolidation run governance is bound to a step.
-const CONSOLIDATION_WORKFLOW_SCOPE_TYPES = freezeScopeTypes([
-  "OPERATING_UNIT",
+// Consolidation workflow scopes are permission-specific.
+//
+// Important distinction:
+// - COUNTRY is valid for close-task RBAC / visibility in the checklist module.
+// - COUNTRY is not valid for creating/running/finalizing consolidation runs in v1.
+//
+// Current v1 consolidation model:
+// - consolidation.run.create may be reviewed at LEGAL_ENTITY or GROUP scope.
+// - execution, adjustment, elimination, and finalization are GROUP-level controls.
+// - country-level sub-consolidation is intentionally not modeled yet.
+const CONSOLIDATION_RUN_CREATE_WORKFLOW_SCOPE_TYPES = freezeScopeTypes([
   "LEGAL_ENTITY",
-  "COUNTRY",
   "GROUP",
 ]);
+
+const CONSOLIDATION_GROUP_WORKFLOW_SCOPE_TYPES = freezeScopeTypes(["GROUP"]);
 
 export const WORKFLOW_STEP_ALLOWED_SCOPE_TYPES_BY_PERMISSION = Object.freeze({
   "ouclose.prepare": freezeScopeTypes(["LEGAL_ENTITY"]),
@@ -20,11 +27,12 @@ export const WORKFLOW_STEP_ALLOWED_SCOPE_TYPES_BY_PERMISSION = Object.freeze({
   "ouclose.reopen": freezeScopeTypes(["COUNTRY", "GROUP"]),
   "ouclose.admin": freezeScopeTypes(["COUNTRY", "GROUP"]),
   "ouclose.override_post_lock": freezeScopeTypes(["COUNTRY", "GROUP"]),
-  "consolidation.run.create": CONSOLIDATION_WORKFLOW_SCOPE_TYPES,
-  "consolidation.run.execute": CONSOLIDATION_WORKFLOW_SCOPE_TYPES,
-  "consolidation.adjustment.post": CONSOLIDATION_WORKFLOW_SCOPE_TYPES,
-  "consolidation.elimination.post": CONSOLIDATION_WORKFLOW_SCOPE_TYPES,
-  "consolidation.run.finalize": CONSOLIDATION_WORKFLOW_SCOPE_TYPES,
+
+  "consolidation.run.create": CONSOLIDATION_RUN_CREATE_WORKFLOW_SCOPE_TYPES,
+  "consolidation.run.execute": CONSOLIDATION_GROUP_WORKFLOW_SCOPE_TYPES,
+  "consolidation.adjustment.post": CONSOLIDATION_GROUP_WORKFLOW_SCOPE_TYPES,
+  "consolidation.elimination.post": CONSOLIDATION_GROUP_WORKFLOW_SCOPE_TYPES,
+  "consolidation.run.finalize": CONSOLIDATION_GROUP_WORKFLOW_SCOPE_TYPES,
 });
 
 function normalizeWorkflowStepPermissionCode(permissionCode) {
@@ -43,7 +51,7 @@ function normalizeWorkflowStepScopeType(scopeType) {
 export function getWorkflowStepAllowedScopeTypes(permissionCode) {
   return (
     WORKFLOW_STEP_ALLOWED_SCOPE_TYPES_BY_PERMISSION[
-      normalizeWorkflowStepPermissionCode(permissionCode)
+    normalizeWorkflowStepPermissionCode(permissionCode)
     ] || Object.freeze([])
   );
 }
