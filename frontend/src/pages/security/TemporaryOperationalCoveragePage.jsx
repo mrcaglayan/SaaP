@@ -59,9 +59,9 @@ function getRowScope(row) {
 function getBadgeClassName(map, value) {
   return (
     map[
-      String(value || "")
-        .trim()
-        .toUpperCase()
+    String(value || "")
+      .trim()
+      .toUpperCase()
     ] || "border-slate-200 bg-slate-100 text-slate-700"
   );
 }
@@ -170,7 +170,7 @@ export default function TemporaryOperationalCoveragePage() {
       });
       setError(
         err?.response?.data?.message ||
-          "Temporary operational coverage workspace could not be loaded.",
+        "Temporary operational coverage workspace could not be loaded.",
       );
     } finally {
       setLoading(false);
@@ -210,7 +210,7 @@ export default function TemporaryOperationalCoveragePage() {
     } catch (err) {
       setError(
         err?.response?.data?.message ||
-          "Temporary operational coverage request could not be created.",
+        "Temporary operational coverage request could not be created.",
       );
     } finally {
       setSaving(false);
@@ -234,7 +234,7 @@ export default function TemporaryOperationalCoveragePage() {
     } catch (err) {
       setError(
         err?.response?.data?.message ||
-          "Coverage request could not be approved.",
+        "Coverage request could not be approved.",
       );
     } finally {
       setActingRowId(0);
@@ -258,7 +258,7 @@ export default function TemporaryOperationalCoveragePage() {
     } catch (err) {
       setError(
         err?.response?.data?.message ||
-          "Coverage request could not be rejected.",
+        "Coverage request could not be rejected.",
       );
     } finally {
       setActingRowId(0);
@@ -287,7 +287,7 @@ export default function TemporaryOperationalCoveragePage() {
     } catch (err) {
       setError(
         err?.response?.data?.message ||
-          "Coverage request could not be revoked.",
+        "Coverage request could not be revoked.",
       );
     } finally {
       setActingRowId(0);
@@ -321,7 +321,10 @@ export default function TemporaryOperationalCoveragePage() {
       workspaceSectionKey="users"
       sectionKey="user-assignments"
       eyebrow={l("Users & Assignments Workbench", "Kullanicilar ve Atamalar Workbench'i")}
-      title={l("Temporary Coverage", "Gecici kapsama")}
+      title={l(
+        "Temporary Operational Coverage",
+        "Gecici operasyonel kapsama"
+      )}
       description={l(
         "Request, review, and revoke time-bounded runtime authority without leaving the users workbench family.",
         "Tarihle sinirli runtime yetkisini users workbench ailesinden cikmadan isteyin, inceleyin ve geri alin."
@@ -349,325 +352,327 @@ export default function TemporaryOperationalCoveragePage() {
       hiddenPrimarySurfaceKeys={["roles-permissions"]}
     >
       <div className="space-y-4">
-      <div className="rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900">
-        <div className="font-semibold">Separate From Approval Delegation</div>
-        <p className="mt-1">
-          Approval delegation proxies review actions. Temporary operational
-          coverage grants temporary runtime authority to another local operator.
-        </p>
-        <Link
-          to="/app/ayarlar/rbac/delegations"
-          className="mt-3 inline-flex rounded-lg border border-sky-300 bg-white px-3 py-2 font-medium text-sky-800 hover:bg-sky-100"
-        >
-          Open Approval Delegations
-        </Link>
-      </div>
-
-      {error ? (
-        <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-          {error}
-        </div>
-      ) : null}
-      {message ? (
-        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-          {message}
-        </div>
-      ) : null}
-
-      <section className="rounded-xl border border-slate-200 bg-white p-4">
-        <div className="mb-4 flex items-center justify-between gap-3">
-          <div>
-            <h2 className="text-lg font-semibold text-slate-900">
-              Request Coverage
-            </h2>
-            <p className="text-sm text-slate-500">
-              Create one bounded local-role coverage request for an existing
-              tenant user.
-            </p>
+        <div className="rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900">
+          <div className="font-semibold">
+            Temporary Operational Coverage is separate from approval delegation
           </div>
-          <button
-            type="button"
-            onClick={loadWorkspace}
-            className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          <p className="mt-1">
+            Approval delegation proxies review actions. Temporary operational
+            coverage grants temporary runtime authority to another local operator.
+          </p>
+          <Link
+            to="/app/ayarlar/rbac/delegations"
+            className="mt-3 inline-flex rounded-lg border border-sky-300 bg-white px-3 py-2 font-medium text-sky-800 hover:bg-sky-100"
           >
-            Refresh
-          </button>
+            Open Approval Delegations
+          </Link>
         </div>
 
-        <form
-          onSubmit={handleCreate}
-          className="grid gap-3 md:grid-cols-2 xl:grid-cols-3"
-        >
-          <input
-            type="email"
-            value={form.delegateEmail}
-            onChange={(event) =>
-              setForm((prev) => ({
-                ...prev,
-                delegateEmail: event.target.value,
-              }))
-            }
-            placeholder="Delegate user email"
-            className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-            required
-          />
-          <select
-            value={form.roleCode}
-            onChange={(event) =>
-              setForm((prev) => ({ ...prev, roleCode: event.target.value }))
-            }
-            className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-            required
-          >
-            <option value="">Select local role</option>
-            {workspace.roles.map((row) => (
-              <option key={row.code} value={row.code}>
-                {row.code} - {row.name}
-              </option>
-            ))}
-          </select>
-          <select
-            value={form.scopeType}
-            onChange={(event) =>
-              setForm((prev) => ({
-                ...prev,
-                scopeType: event.target.value,
-                scopeId: "",
-              }))
-            }
-            className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-            required
-            disabled={!selectedRole}
-          >
-            <option value="">Select scope type</option>
-            {(selectedRole?.allowedScopeTypes || []).map((scopeType) => (
-              <option key={scopeType} value={scopeType}>
-                {scopeType}
-              </option>
-            ))}
-          </select>
-          <select
-            value={form.scopeId}
-            onChange={(event) =>
-              setForm((prev) => ({ ...prev, scopeId: event.target.value }))
-            }
-            className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-            required
-            disabled={!form.scopeType}
-          >
-            <option value="">Select scope</option>
-            {scopeOptions.map((row) => (
-              <option key={`${form.scopeType}-${row.id}`} value={row.id}>
-                {row.label}
-              </option>
-            ))}
-          </select>
-          <input
-            type="date"
-            value={form.startDate}
-            onChange={(event) =>
-              setForm((prev) => ({ ...prev, startDate: event.target.value }))
-            }
-            className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-            required
-          />
-          <input
-            type="date"
-            value={form.endDate}
-            onChange={(event) =>
-              setForm((prev) => ({ ...prev, endDate: event.target.value }))
-            }
-            className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-            required
-          />
-          <textarea
-            value={form.note}
-            onChange={(event) =>
-              setForm((prev) => ({ ...prev, note: event.target.value }))
-            }
-            placeholder="Note for reviewers"
-            className="min-h-24 rounded-lg border border-slate-300 px-3 py-2 text-sm md:col-span-2 xl:col-span-3"
-          />
-          <div className="md:col-span-2 xl:col-span-3">
+        {error ? (
+          <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+            {error}
+          </div>
+        ) : null}
+        {message ? (
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+            {message}
+          </div>
+        ) : null}
+
+        <section className="rounded-xl border border-slate-200 bg-white p-4">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">
+                Request Coverage
+              </h2>
+              <p className="text-sm text-slate-500">
+                Create one bounded local-role coverage request for an existing
+                tenant user.
+              </p>
+            </div>
             <button
-              type="submit"
-              disabled={saving}
-              className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+              type="button"
+              onClick={loadWorkspace}
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
             >
-              {saving ? "Creating..." : "Create Coverage Request"}
+              Refresh
             </button>
           </div>
-        </form>
-      </section>
 
-      <section className="rounded-xl border border-slate-200 bg-white p-4">
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="text-lg font-semibold text-slate-900">
-              Coverage Queue
-            </h2>
-            <p className="text-sm text-slate-500">
-              Requested, approved, active, revoked, expired, and rejected
-              coverage rows visible at your scoped workspace.
-            </p>
-          </div>
-          <select
-            value={stateFilter}
-            onChange={(event) => setStateFilter(event.target.value)}
-            className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+          <form
+            onSubmit={handleCreate}
+            className="grid gap-3 md:grid-cols-2 xl:grid-cols-3"
           >
-            {[
-              "ALL",
-              "REQUESTED",
-              "APPROVED",
-              "ACTIVE",
-              "REVOKED",
-              "EXPIRED",
-              "REJECTED",
-            ].map((state) => (
-              <option key={state} value={state}>
-                {state}
-              </option>
-            ))}
-          </select>
-        </div>
+            <input
+              type="email"
+              value={form.delegateEmail}
+              onChange={(event) =>
+                setForm((prev) => ({
+                  ...prev,
+                  delegateEmail: event.target.value,
+                }))
+              }
+              placeholder="Delegate user email"
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              required
+            />
+            <select
+              value={form.roleCode}
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, roleCode: event.target.value }))
+              }
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              required
+            >
+              <option value="">Select local role</option>
+              {workspace.roles.map((row) => (
+                <option key={row.code} value={row.code}>
+                  {row.code} - {row.name}
+                </option>
+              ))}
+            </select>
+            <select
+              value={form.scopeType}
+              onChange={(event) =>
+                setForm((prev) => ({
+                  ...prev,
+                  scopeType: event.target.value,
+                  scopeId: "",
+                }))
+              }
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              required
+              disabled={!selectedRole}
+            >
+              <option value="">Select scope type</option>
+              {(selectedRole?.allowedScopeTypes || []).map((scopeType) => (
+                <option key={scopeType} value={scopeType}>
+                  {scopeType}
+                </option>
+              ))}
+            </select>
+            <select
+              value={form.scopeId}
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, scopeId: event.target.value }))
+              }
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              required
+              disabled={!form.scopeType}
+            >
+              <option value="">Select scope</option>
+              {scopeOptions.map((row) => (
+                <option key={`${form.scopeType}-${row.id}`} value={row.id}>
+                  {row.label}
+                </option>
+              ))}
+            </select>
+            <input
+              type="date"
+              value={form.startDate}
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, startDate: event.target.value }))
+              }
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              required
+            />
+            <input
+              type="date"
+              value={form.endDate}
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, endDate: event.target.value }))
+              }
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              required
+            />
+            <textarea
+              value={form.note}
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, note: event.target.value }))
+              }
+              placeholder="Note for reviewers"
+              className="min-h-24 rounded-lg border border-slate-300 px-3 py-2 text-sm md:col-span-2 xl:col-span-3"
+            />
+            <div className="md:col-span-2 xl:col-span-3">
+              <button
+                type="submit"
+                disabled={saving}
+                className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {saving ? "Creating..." : "Create Coverage Request"}
+              </button>
+            </div>
+          </form>
+        </section>
 
-        {loading ? (
-          <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-6 text-center text-sm text-slate-500">
-            Loading temporary operational coverage workspace...
+        <section className="rounded-xl border border-slate-200 bg-white p-4">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">
+                Coverage Queue
+              </h2>
+              <p className="text-sm text-slate-500">
+                Requested, approved, active, revoked, expired, and rejected
+                coverage rows visible at your scoped workspace.
+              </p>
+            </div>
+            <select
+              value={stateFilter}
+              onChange={(event) => setStateFilter(event.target.value)}
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+            >
+              {[
+                "ALL",
+                "REQUESTED",
+                "APPROVED",
+                "ACTIVE",
+                "REVOKED",
+                "EXPIRED",
+                "REJECTED",
+              ].map((state) => (
+                <option key={state} value={state}>
+                  {state}
+                </option>
+              ))}
+            </select>
           </div>
-        ) : filteredRows.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-slate-300 px-3 py-6 text-center text-sm text-slate-500">
-            No temporary operational coverage rows matched the current filter.
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-slate-200 text-sm">
-              <thead className="bg-slate-50">
-                <tr>
-                  <th className="px-3 py-2 text-left font-semibold text-slate-600">
-                    State
-                  </th>
-                  <th className="px-3 py-2 text-left font-semibold text-slate-600">
-                    Delegate
-                  </th>
-                  <th className="px-3 py-2 text-left font-semibold text-slate-600">
-                    Role / Scope
-                  </th>
-                  <th className="px-3 py-2 text-left font-semibold text-slate-600">
-                    Window
-                  </th>
-                  <th className="px-3 py-2 text-left font-semibold text-slate-600">
-                    Requester
-                  </th>
-                  <th className="px-3 py-2 text-left font-semibold text-slate-600">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {filteredRows.map((row) => {
-                  const busy = actingRowId === Number(row.id);
-                  return (
-                    <tr key={row.id}>
-                      <td className="space-y-2 px-3 py-3 align-top">
-                        <div
-                          className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${getBadgeClassName(
-                            STATE_BADGE_CLASS_NAMES,
-                            row.state,
-                          )}`}
-                        >
-                          {row.state}
-                        </div>
-                        <div
-                          className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${getBadgeClassName(
-                            REVIEW_BADGE_CLASS_NAMES,
-                            row.reviewStatus,
-                          )}`}
-                        >
-                          Review: {row.reviewStatus}
-                        </div>
-                        {row.approvalRequest?.executionErrorText ? (
-                          <div className="max-w-xs rounded-lg border border-rose-200 bg-rose-50 px-2 py-1 text-xs text-rose-700">
-                            {row.approvalRequest.executionErrorText}
-                          </div>
-                        ) : null}
-                      </td>
-                      <td className="px-3 py-3 align-top text-slate-700">
-                        <div className="font-medium text-slate-900">
-                          {row.delegateUserName}
-                        </div>
-                        <div className="text-xs text-slate-500">
-                          {row.delegateUserEmail}
-                        </div>
-                      </td>
-                      <td className="px-3 py-3 align-top text-slate-700">
-                        <div className="font-medium text-slate-900">
-                          {row.roleCode}
-                        </div>
-                        <div className="text-xs text-slate-500">
-                          {formatScopeLabel(row)}
-                        </div>
-                      </td>
-                      <td className="px-3 py-3 align-top text-slate-700">
-                        <div>{formatWindow(row)}</div>
-                        <div className="text-xs text-slate-500">
-                          Requested {formatDate(row.requestedAt)}
-                        </div>
-                      </td>
-                      <td className="px-3 py-3 align-top text-slate-700">
-                        <div className="font-medium text-slate-900">
-                          {row.requesterUserName}
-                        </div>
-                        <div className="text-xs text-slate-500">
-                          {row.requesterUserEmail}
-                        </div>
-                      </td>
-                      <td className="space-y-2 px-3 py-3 align-top">
-                        {canReviewRow(row) ? (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => handleApprove(row)}
-                              disabled={busy}
-                              className="w-full rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
-                            >
-                              {busy ? "Working..." : "Approve"}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleReject(row)}
-                              disabled={busy}
-                              className="w-full rounded-lg bg-rose-600 px-3 py-2 text-xs font-semibold text-white hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
-                            >
-                              {busy ? "Working..." : "Reject"}
-                            </button>
-                          </>
-                        ) : null}
-                        {canRevokeRow(row) ? (
-                          <button
-                            type="button"
-                            onClick={() => handleRevoke(row)}
-                            disabled={busy}
-                            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+
+          {loading ? (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-6 text-center text-sm text-slate-500">
+              Loading temporary operational coverage workspace...
+            </div>
+          ) : filteredRows.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-slate-300 px-3 py-6 text-center text-sm text-slate-500">
+              No temporary operational coverage rows matched the current filter.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-slate-200 text-sm">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-semibold text-slate-600">
+                      State
+                    </th>
+                    <th className="px-3 py-2 text-left font-semibold text-slate-600">
+                      Delegate
+                    </th>
+                    <th className="px-3 py-2 text-left font-semibold text-slate-600">
+                      Role / Scope
+                    </th>
+                    <th className="px-3 py-2 text-left font-semibold text-slate-600">
+                      Window
+                    </th>
+                    <th className="px-3 py-2 text-left font-semibold text-slate-600">
+                      Requester
+                    </th>
+                    <th className="px-3 py-2 text-left font-semibold text-slate-600">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredRows.map((row) => {
+                    const busy = actingRowId === Number(row.id);
+                    return (
+                      <tr key={row.id}>
+                        <td className="space-y-2 px-3 py-3 align-top">
+                          <div
+                            className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${getBadgeClassName(
+                              STATE_BADGE_CLASS_NAMES,
+                              row.state,
+                            )}`}
                           >
-                            {busy ? "Working..." : "Revoke"}
-                          </button>
-                        ) : null}
-                        {!canReviewRow(row) && !canRevokeRow(row) ? (
-                          <span className="text-xs text-slate-400">
-                            No action available
-                          </span>
-                        ) : null}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
+                            {row.state}
+                          </div>
+                          <div
+                            className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${getBadgeClassName(
+                              REVIEW_BADGE_CLASS_NAMES,
+                              row.reviewStatus,
+                            )}`}
+                          >
+                            Review: {row.reviewStatus}
+                          </div>
+                          {row.approvalRequest?.executionErrorText ? (
+                            <div className="max-w-xs rounded-lg border border-rose-200 bg-rose-50 px-2 py-1 text-xs text-rose-700">
+                              {row.approvalRequest.executionErrorText}
+                            </div>
+                          ) : null}
+                        </td>
+                        <td className="px-3 py-3 align-top text-slate-700">
+                          <div className="font-medium text-slate-900">
+                            {row.delegateUserName}
+                          </div>
+                          <div className="text-xs text-slate-500">
+                            {row.delegateUserEmail}
+                          </div>
+                        </td>
+                        <td className="px-3 py-3 align-top text-slate-700">
+                          <div className="font-medium text-slate-900">
+                            {row.roleCode}
+                          </div>
+                          <div className="text-xs text-slate-500">
+                            {formatScopeLabel(row)}
+                          </div>
+                        </td>
+                        <td className="px-3 py-3 align-top text-slate-700">
+                          <div>{formatWindow(row)}</div>
+                          <div className="text-xs text-slate-500">
+                            Requested {formatDate(row.requestedAt)}
+                          </div>
+                        </td>
+                        <td className="px-3 py-3 align-top text-slate-700">
+                          <div className="font-medium text-slate-900">
+                            {row.requesterUserName}
+                          </div>
+                          <div className="text-xs text-slate-500">
+                            {row.requesterUserEmail}
+                          </div>
+                        </td>
+                        <td className="space-y-2 px-3 py-3 align-top">
+                          {canReviewRow(row) ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => handleApprove(row)}
+                                disabled={busy}
+                                className="w-full rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                {busy ? "Working..." : "Approve"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleReject(row)}
+                                disabled={busy}
+                                className="w-full rounded-lg bg-rose-600 px-3 py-2 text-xs font-semibold text-white hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                {busy ? "Working..." : "Reject"}
+                              </button>
+                            </>
+                          ) : null}
+                          {canRevokeRow(row) ? (
+                            <button
+                              type="button"
+                              onClick={() => handleRevoke(row)}
+                              disabled={busy}
+                              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {busy ? "Working..." : "Revoke"}
+                            </button>
+                          ) : null}
+                          {!canReviewRow(row) && !canRevokeRow(row) ? (
+                            <span className="text-xs text-slate-400">
+                              No action available
+                            </span>
+                          ) : null}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
       </div>
     </SecurityAdminWorkspaceShell>
   );
