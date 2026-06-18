@@ -26,6 +26,7 @@ import {
 } from "../services/close.task-templates.service.js";
 import {
   attachCloseTaskEvidence,
+  createCloseTaskEvidenceDraft,
   downloadCloseTaskEvidence,
   listCloseTaskEvidence,
   removeCloseTaskEvidence,
@@ -45,6 +46,7 @@ import {
   parseCloseTaskCommentDeleteInput,
   parseCloseTaskCreateInput,
   parseCloseTaskEvidenceAttachInput,
+  parseCloseTaskEvidenceDraftInput,
   parseCloseTaskEvidenceMutationInput,
   parseCloseTaskIdParam,
   parseCloseTaskListInput,
@@ -72,6 +74,36 @@ function buildActorCtx(input, req) {
     userId: input.userId || req.user?.userId,
     req,
   };
+}
+
+function resolveBinaryUploadLimit() {
+  const fallbackBytes = 15 * 1024 * 1024;
+  const parsed = Number(process.env.EVIDENCE_MAX_UPLOAD_BYTES || fallbackBytes);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return fallbackBytes;
+  }
+  return parsed;
+}
+
+const evidenceBinaryUploadMiddleware = express.raw({
+  type: () => true,
+  limit: resolveBinaryUploadLimit(),
+});
+
+function sanitizeHeaderContentType(value) {
+  const normalized = String(value || "").trim();
+  if (!normalized) {
+    return null;
+  }
+  return normalized.split(";")[0].trim().toLowerCase();
+}
+
+function toSafeAttachmentFileName(value) {
+  const normalized = String(value || "")
+    .trim()
+    .replace(/["\r\n]/g, "_")
+    .replace(/[\\/]/g, "_");
+  return normalized || "evidence.bin";
 }
 
 router.get(
@@ -282,6 +314,16 @@ router.get(
 );
 
 router.post(
+  "/tasks/:taskId/evidence/drafts",
+  requireAnyPermission(["close.task.work", "close.task.admin"], { resolveScope: readTaskScope }),
+  asyncHandler(async (req, res) => {
+    const input = parseCloseTaskEvidenceDraftInput(req);
+    const result = await createCloseTaskEvidenceDraft(input, buildActorCtx(input, req));
+    return res.status(201).json({ ok: true, tenantId: input.tenantId, taskId: input.taskId, ...result });
+  }),
+);
+
+router.post(
   "/tasks/:taskId/evidence",
   requireAnyPermission(["close.task.work", "close.task.admin"], { resolveScope: readTaskScope }),
   asyncHandler(async (req, res) => {
@@ -294,10 +336,21 @@ router.post(
 router.put(
   "/tasks/:taskId/evidence/:evidenceId/content",
   requireAnyPermission(["close.task.work", "close.task.admin"], { resolveScope: readTaskScope }),
+  evidenceBinaryUploadMiddleware,
   asyncHandler(async (req, res) => {
-    parseCloseTaskEvidenceMutationInput(req);
-    await uploadCloseTaskEvidenceContent();
-    return res.status(204).send();
+    const input = parseCloseTaskEvidenceMutationInput(req);
+    if (!(req.body instanceof Buffer)) {
+      throw badRequest("Binary payload is required");
+    }
+    const result = await uploadCloseTaskEvidenceContent(
+      {
+        ...input,
+        contentType: sanitizeHeaderContentType(req.headers?.["content-type"]),
+      },
+      buildActorCtx(input, req),
+      req.body,
+    );
+    return res.json({ ok: true, tenantId: input.tenantId, taskId: input.taskId, ...result });
   }),
 );
 
@@ -305,9 +358,20 @@ router.get(
   "/tasks/:taskId/evidence/:evidenceId/download",
   requirePermission("close.task.read", { resolveScope: readTaskScope }),
   asyncHandler(async (req, res) => {
-    parseCloseTaskEvidenceMutationInput(req);
-    await downloadCloseTaskEvidence();
-    return res.status(204).send();
+    const input = parseCloseTaskEvidenceMutationInput(req);
+    const payload = await downloadCloseTaskEvidence(input, buildActorCtx(input, req));
+    const fileName = toSafeAttachmentFileName(
+      payload.row?.evidence?.fileName || payload.row?.evidence?.displayName,
+    );
+    res.setHeader("Content-Type", payload.row?.evidence?.contentType || "application/octet-stream");
+    if (
+      payload.row?.evidence?.fileSizeBytes !== null &&
+      payload.row?.evidence?.fileSizeBytes !== undefined
+    ) {
+      res.setHeader("Content-Length", String(payload.row.evidence.fileSizeBytes));
+    }
+    res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+    return res.send(payload.data);
   }),
 );
 

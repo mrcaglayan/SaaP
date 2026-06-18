@@ -976,6 +976,7 @@ function buildTaskListWhere(filters = {}, actorCtx = {}) {
   }
   if (filters.evidenceMissing === true) {
     clauses.push(`cti.evidence_required = TRUE
+      AND cti.status NOT IN ('WAIVED', 'CANCELLED')
       AND NOT EXISTS (
         SELECT 1
         FROM close_task_evidence cte
@@ -1767,6 +1768,18 @@ export async function approveCloseTask(input = {}, actorCtx = {}) {
         const admin = await userCanAdminTask(userId, current.tenant_id, current, tx.query);
         if (!admin) {
           throw forbidden("Reviewer cannot approve their own submitted task");
+        }
+      }
+      if (current.evidence_required) {
+        const evidenceCount = await countActiveEvidenceForTask({
+          tenantId: current.tenant_id,
+          taskId: current.id,
+          runQuery: tx.query,
+        });
+        if (evidenceCount < 1) {
+          throw conflict("Evidence is required before this task can be approved", {
+            evidenceRequired: true,
+          });
         }
       }
     },

@@ -547,6 +547,21 @@ export function parseCloseTaskEvidenceAttachInput(req) {
   };
 }
 
+/** Parse task evidence draft metadata before binary content upload. */
+export function parseCloseTaskEvidenceDraftInput(req) {
+  return {
+    tenantId: requireTenantId(req),
+    userId: requireUserId(req),
+    taskId: parseCloseTaskIdParam(req),
+    fileName: normalizeText(req.body?.fileName ?? req.body?.file_name, "fileName", 255, {
+      required: true,
+    }),
+    displayName: normalizeText(req.body?.displayName ?? req.body?.display_name, "displayName", 190),
+    note: normalizeText(req.body?.note, "note", 500),
+    contentType: normalizeText(req.body?.contentType ?? req.body?.content_type, "contentType", 120),
+  };
+}
+
 /** Parse task evidence remove/download/content mutation parameters. */
 export function parseCloseTaskEvidenceMutationInput(req) {
   return {

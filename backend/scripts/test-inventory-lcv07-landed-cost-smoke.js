@@ -759,6 +759,10 @@ async function main() {
     tenantId: context.tenantId,
     stamp,
   });
+  const transferApproverUserId = await createSmokeUser({
+    tenantId: context.tenantId,
+    stamp: `${stamp}.transfer.approver`,
+  });
   const accounts = await createTempAccounts({ coaId, stamp });
   const counterpartyId = await createSmokeCounterparty({
     tenantId: context.tenantId,
@@ -1385,7 +1389,7 @@ async function main() {
       payload: {
         tenantId: context.tenantId,
         transferId: transferToBranch.id,
-        userId,
+        userId: transferApproverUserId,
       },
     });
     transferToBranch = await shipInventoryTransferById({
@@ -1519,7 +1523,7 @@ async function main() {
       payload: {
         tenantId: context.tenantId,
         transferId: transferBackToCentral.id,
-        userId,
+        userId: transferApproverUserId,
       },
     });
     transferBackToCentral = await shipInventoryTransferById({

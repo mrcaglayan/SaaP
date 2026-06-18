@@ -136,12 +136,25 @@ export async function attachCloseTaskEvidence(taskId, payload = {}) {
 }
 
 /**
+ * Create a task-scoped evidence draft before uploading binary content.
+ */
+export async function createCloseTaskEvidenceDraft(taskId, payload = {}) {
+  const response = await api.post(`/api/v1/close/tasks/${taskId}/evidence/drafts`, payload);
+  return response.data;
+}
+
+/**
  * Upload or replace content for a task evidence object.
  */
-export async function uploadCloseTaskEvidenceContent(taskId, evidenceId, payload = {}) {
+export async function uploadCloseTaskEvidenceContent(taskId, evidenceId, payload, options = {}) {
   const response = await api.put(
     `/api/v1/close/tasks/${taskId}/evidence/${evidenceId}/content`,
     payload,
+    {
+      headers: {
+        "Content-Type": options.contentType || "application/octet-stream",
+      },
+    },
   );
   return response.data;
 }
@@ -152,8 +165,9 @@ export async function uploadCloseTaskEvidenceContent(taskId, evidenceId, payload
 export async function downloadCloseTaskEvidence(taskId, evidenceId) {
   const response = await api.get(
     `/api/v1/close/tasks/${taskId}/evidence/${evidenceId}/download`,
+    { responseType: "blob" },
   );
-  return response.data;
+  return response;
 }
 
 /**

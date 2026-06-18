@@ -26,6 +26,7 @@ import {
   cancelCloseTask,
   createCloseTask,
   createCloseTaskComment,
+  createCloseTaskEvidenceDraft,
   deleteCloseTaskComment,
   downloadCloseTaskEvidence,
   getCloseTask,
@@ -148,6 +149,18 @@ function getApiErrorMessage(error, fallback) {
     error?.message ||
     fallback
   );
+}
+
+function getDownloadFileName(headers, fallback = "evidence.bin") {
+  const disposition = headers?.["content-disposition"] || headers?.["Content-Disposition"] || "";
+  const quotedMatch = String(disposition).match(/filename="([^"]+)"/i);
+  const bareMatch = String(disposition).match(/filename=([^;]+)/i);
+  const rawName = quotedMatch?.[1] || bareMatch?.[1] || fallback;
+  try {
+    return decodeURIComponent(String(rawName).trim().replace(/^UTF-8''/i, "")) || fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 function getCurrentUserId(user) {
@@ -355,6 +368,9 @@ export default function CloseTaskBoardPage() {
   const [editForm, setEditForm] = useState(() => emptyManualTaskForm());
   const [reason, setReason] = useState("");
   const [commentBody, setCommentBody] = useState("");
+  const [newEvidenceFile, setNewEvidenceFile] = useState(null);
+  const [newEvidenceDisplayName, setNewEvidenceDisplayName] = useState("");
+  const [newEvidenceNote, setNewEvidenceNote] = useState("");
   const [evidenceObjectId, setEvidenceObjectId] = useState("");
   const [removeEvidenceReason, setRemoveEvidenceReason] = useState("");
   const [uploadFilesByEvidenceId, setUploadFilesByEvidenceId] = useState({});
@@ -695,6 +711,41 @@ export default function CloseTaskBoardPage() {
     }
   }
 
+  async function handleCreateEvidenceDraft(event) {
+    event.preventDefault();
+    if (!selectedTask?.id || !newEvidenceFile) {
+      setError(l("Select a file to upload.", "Yuklenecek dosya secin."));
+      return;
+    }
+    setBusyAction("createEvidenceDraft");
+    setError("");
+    setMessage("");
+    try {
+      const draft = await createCloseTaskEvidenceDraft(selectedTask.id, {
+        fileName: newEvidenceFile.name,
+        displayName: newEvidenceDisplayName || newEvidenceFile.name,
+        note: newEvidenceNote || undefined,
+        contentType: newEvidenceFile.type || "application/octet-stream",
+      });
+      const evidenceId = draft?.row?.evidenceObjectId;
+      if (!evidenceId) {
+        throw new Error(l("Evidence draft was not returned.", "Kanit taslagi donmedi."));
+      }
+      await uploadCloseTaskEvidenceContent(selectedTask.id, evidenceId, newEvidenceFile, {
+        contentType: newEvidenceFile.type || "application/octet-stream",
+      });
+      setNewEvidenceFile(null);
+      setNewEvidenceDisplayName("");
+      setNewEvidenceNote("");
+      setMessage(l("Evidence file uploaded.", "Kanit dosyasi yuklendi."));
+      refreshAll();
+    } catch (err) {
+      setError(getApiErrorMessage(err, l("Evidence file could not be uploaded.", "Kanit dosyasi yuklenemedi.")));
+    } finally {
+      setBusyAction("");
+    }
+  }
+
   async function handleRemoveEvidence(evidenceId) {
     if (!selectedTask?.id || !evidenceId) {
       return;
@@ -716,6 +767,37 @@ export default function CloseTaskBoardPage() {
     }
   }
 
+  async function handleUploadEvidence(evidenceId) {
+    if (!selectedTask?.id || !evidenceId) {
+      return;
+    }
+    const key = String(evidenceId);
+    const file = uploadFilesByEvidenceId[key];
+    if (!file) {
+      setError(l("Select a file to upload.", "Yuklenecek dosya secin."));
+      return;
+    }
+    setBusyAction(`uploadEvidence:${evidenceId}`);
+    setError("");
+    setMessage("");
+    try {
+      await uploadCloseTaskEvidenceContent(selectedTask.id, evidenceId, file, {
+        contentType: file.type || "application/octet-stream",
+      });
+      setUploadFilesByEvidenceId((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+      setMessage(l("Evidence file uploaded.", "Kanit dosyasi yuklendi."));
+      refreshAll();
+    } catch (err) {
+      setError(getApiErrorMessage(err, l("Evidence file could not be uploaded.", "Kanit dosyasi yuklenemedi.")));
+    } finally {
+      setBusyAction("");
+    }
+  }
+
   async function handleDownloadEvidence(evidenceId) {
     if (!selectedTask?.id || !evidenceId) {
       return;
@@ -724,33 +806,19 @@ export default function CloseTaskBoardPage() {
     setError("");
     setMessage("");
     try {
-      await downloadCloseTaskEvidence(selectedTask.id, evidenceId);
-      setMessage(l("Evidence download requested.", "Kanit indirme istendi."));
+      const response = await downloadCloseTaskEvidence(selectedTask.id, evidenceId);
+      const contentType = response?.headers?.["content-type"] || "application/octet-stream";
+      const blob = response?.data instanceof Blob ? response.data : new Blob([response?.data], { type: contentType });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = getDownloadFileName(response?.headers);
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
     } catch (err) {
-      setError(getApiErrorMessage(err, l("Evidence could not be downloaded.", "Kanit indirilemedi.")));
-    } finally {
-      setBusyAction("");
-    }
-  }
-
-  async function handleUploadEvidence(evidenceId) {
-    const file = uploadFilesByEvidenceId[evidenceId];
-    if (!selectedTask?.id || !evidenceId || !file) {
-      setError(l("Select a file before upload.", "Yuklemeden once dosya secin."));
-      return;
-    }
-    const formData = new FormData();
-    formData.append("file", file);
-    setBusyAction(`uploadEvidence:${evidenceId}`);
-    setError("");
-    setMessage("");
-    try {
-      await uploadCloseTaskEvidenceContent(selectedTask.id, evidenceId, formData);
-      setMessage(l("Evidence upload requested.", "Kanit yukleme istendi."));
-      setUploadFilesByEvidenceId((prev) => ({ ...prev, [evidenceId]: null }));
-      refreshAll();
-    } catch (err) {
-      setError(getApiErrorMessage(err, l("Evidence could not be uploaded.", "Kanit yuklenemedi.")));
+      setError(getApiErrorMessage(err, l("Evidence file could not be downloaded.", "Kanit dosyasi indirilemedi.")));
     } finally {
       setBusyAction("");
     }
@@ -1626,13 +1694,52 @@ export default function CloseTaskBoardPage() {
                       {evidenceRows.length}
                     </span>
                   </div>
+                  <form onSubmit={handleCreateEvidenceDraft} className="mb-4 grid gap-3 lg:grid-cols-4">
+                    <div>
+                      <FieldLabel>{l("File", "Dosya")}</FieldLabel>
+                      <input
+                        key={newEvidenceFile ? "new-evidence-selected" : "new-evidence-empty"}
+                        type="file"
+                        onChange={(event) => setNewEvidenceFile(event.target.files?.[0] || null)}
+                        className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                        disabled={!canWorkSelected}
+                      />
+                    </div>
+                    <div>
+                      <FieldLabel>{l("Display name", "Gorunen ad")}</FieldLabel>
+                      <input
+                        value={newEvidenceDisplayName}
+                        onChange={(event) => setNewEvidenceDisplayName(event.target.value)}
+                        className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                        placeholder={newEvidenceFile?.name || ""}
+                      />
+                    </div>
+                    <div>
+                      <FieldLabel>{l("Note", "Not")}</FieldLabel>
+                      <input
+                        value={newEvidenceNote}
+                        onChange={(event) => setNewEvidenceNote(event.target.value)}
+                        className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                      />
+                    </div>
+                    <div className="flex items-end">
+                      <IconButton
+                        type="submit"
+                        icon={Upload}
+                        disabled={!canWorkSelected || !newEvidenceFile || busyAction === "createEvidenceDraft"}
+                        className="w-full border-slate-900 bg-slate-900 text-white"
+                      >
+                        {l("Create & upload", "Olustur ve yukle")}
+                      </IconButton>
+                    </div>
+                  </form>
                   <form onSubmit={handleAttachEvidence} className="mb-4 flex gap-2">
                     <input
                       value={evidenceObjectId}
                       onChange={(event) => setEvidenceObjectId(event.target.value)}
                       className="min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm"
                       inputMode="numeric"
-                      placeholder={l("Evidence object id", "Kanit nesnesi id")}
+                      placeholder={l("Existing task evidence id", "Mevcut gorev kanit id")}
                     />
                     <IconButton
                       type="submit"
@@ -1650,58 +1757,94 @@ export default function CloseTaskBoardPage() {
                     placeholder={l("Remove reason", "Kaldirma nedeni")}
                   />
                   <div className="space-y-3">
-                    {evidenceRows.map((row) => (
-                      <div key={row.id} className="rounded-xl border border-slate-200 p-3">
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <div className="truncate font-semibold text-slate-900">
-                              {row?.evidence?.displayName || row?.evidence?.fileName || `#${row.evidenceObjectId}`}
+                    {evidenceRows.map((row) => {
+                      const evidenceActionId = row?.evidenceObjectId || row?.id;
+                      const uploadKey = String(evidenceActionId || "");
+                      const selectedFile = uploadFilesByEvidenceId[uploadKey];
+                      const isActiveEvidence = toUpperText(row?.status) === "ACTIVE";
+                      const isUploadedEvidence =
+                        isActiveEvidence && toUpperText(row?.evidence?.status) === "ACTIVE" && row?.evidence?.uploadedAt;
+                      return (
+                        <div key={row.id} className="rounded-xl border border-slate-200 p-3">
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="truncate font-semibold text-slate-900">
+                                {row?.evidence?.displayName || row?.evidence?.fileName || `#${row.evidenceObjectId}`}
+                              </div>
+                              <div className="mt-1 text-xs text-slate-500">
+                                {row.status || "-"} / {formatDateTime(row.attachedAt)}
+                              </div>
+                              {row?.evidence?.fileSizeBytes ? (
+                                <div className="mt-1 text-xs text-slate-500">
+                                  {row.evidence.fileSizeBytes.toLocaleString()} bytes
+                                </div>
+                              ) : null}
+                              {selectedFile ? (
+                                <div className="mt-2 max-w-sm truncate text-xs font-medium text-slate-600">
+                                  {selectedFile.name}
+                                </div>
+                              ) : null}
                             </div>
-                            <div className="mt-1 text-xs text-slate-500">
-                              {row.status || "-"} / {formatDateTime(row.attachedAt)}
+                            <div className="flex flex-wrap justify-end gap-2">
+                              <label className="inline-flex min-h-9 cursor-pointer items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-50">
+                                <Upload className="h-4 w-4 shrink-0" aria-hidden="true" />
+                                <span className="truncate">{l("Choose", "Sec")}</span>
+                                <input
+                                  type="file"
+                                  className="sr-only"
+                                  disabled={!canWorkSelected || !isActiveEvidence}
+                                  onChange={(event) => {
+                                    const file = event.target.files?.[0] || null;
+                                    setUploadFilesByEvidenceId((prev) => {
+                                      const next = { ...prev };
+                                      if (file) {
+                                        next[uploadKey] = file;
+                                      } else {
+                                        delete next[uploadKey];
+                                      }
+                                      return next;
+                                    });
+                                  }}
+                                />
+                              </label>
+                              <IconButton
+                                icon={Upload}
+                                disabled={
+                                  !canWorkSelected ||
+                                  !isActiveEvidence ||
+                                  !selectedFile ||
+                                  busyAction === `uploadEvidence:${evidenceActionId}`
+                                }
+                                onClick={() => handleUploadEvidence(evidenceActionId)}
+                                className="border-slate-900 bg-slate-900 text-white"
+                              >
+                                {l("Upload", "Yukle")}
+                              </IconButton>
+                              <IconButton
+                                icon={Download}
+                                disabled={!isUploadedEvidence || busyAction === `downloadEvidence:${evidenceActionId}`}
+                                onClick={() => handleDownloadEvidence(evidenceActionId)}
+                                className="border-slate-300 bg-white text-slate-700"
+                              >
+                                {l("Download", "Indir")}
+                              </IconButton>
+                              <IconButton
+                                icon={Trash2}
+                                disabled={
+                                  !canWorkSelected ||
+                                  !isActiveEvidence ||
+                                  busyAction === `removeEvidence:${evidenceActionId}`
+                                }
+                                onClick={() => handleRemoveEvidence(evidenceActionId)}
+                                className="border-rose-300 bg-rose-50 text-rose-700"
+                              >
+                                {l("Remove", "Kaldir")}
+                              </IconButton>
                             </div>
                           </div>
-                          <div className="flex flex-wrap gap-2">
-                            <IconButton
-                              icon={Download}
-                              disabled={busyAction === `downloadEvidence:${row.id}`}
-                              onClick={() => handleDownloadEvidence(row.id)}
-                              className="border-slate-300 bg-white text-slate-700"
-                            >
-                              {l("Download", "Indir")}
-                            </IconButton>
-                            <IconButton
-                              icon={Trash2}
-                              disabled={!canWorkSelected || busyAction === `removeEvidence:${row.id}`}
-                              onClick={() => handleRemoveEvidence(row.id)}
-                              className="border-rose-300 bg-rose-50 text-rose-700"
-                            >
-                              {l("Remove", "Kaldir")}
-                            </IconButton>
-                          </div>
                         </div>
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          <input
-                            type="file"
-                            onChange={(event) =>
-                              setUploadFilesByEvidenceId((prev) => ({
-                                ...prev,
-                                [row.id]: event.target.files?.[0] || null,
-                              }))
-                            }
-                            className="min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                          />
-                          <IconButton
-                            icon={Upload}
-                            disabled={!canWorkSelected || !uploadFilesByEvidenceId[row.id]}
-                            onClick={() => handleUploadEvidence(row.id)}
-                            className="border-sky-300 bg-sky-50 text-sky-800"
-                          >
-                            {l("Upload", "Yukle")}
-                          </IconButton>
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                     {evidenceRows.length === 0 ? (
                       <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-500">
                         {l("No evidence is linked.", "Bagli kanit yok.")}

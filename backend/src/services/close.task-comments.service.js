@@ -31,6 +31,12 @@ function mapCommentRow(row) {
   };
 }
 
+function notFound(message) {
+  const err = new Error(message);
+  err.status = 404;
+  return err;
+}
+
 /**
  * List active comments attached to a close task through generic comment scope.
  */
@@ -121,7 +127,7 @@ export async function deleteCloseTaskComment(input = {}, actorCtx = {}) {
       actorCtx,
       runQuery: tx.query,
     });
-    await tx.query(
+    const updateResult = await tx.query(
       `UPDATE internal_comments
        SET status = 'DELETED',
            deleted_by_user_id = ?,
@@ -130,7 +136,8 @@ export async function deleteCloseTaskComment(input = {}, actorCtx = {}) {
        WHERE tenant_id = ?
          AND source_ref_type = ?
          AND source_ref_id = ?
-         AND id = ?`,
+         AND id = ?
+         AND status = 'ACTIVE'`,
       [
         userId,
         userId,
@@ -140,6 +147,9 @@ export async function deleteCloseTaskComment(input = {}, actorCtx = {}) {
         parsePositiveInt(input.commentId),
       ],
     );
+    if (Number(updateResult.rows?.affectedRows || 0) < 1) {
+      throw notFound("Task comment not found");
+    }
     // `close_task_events` does not have COMMENT_DELETED yet; keep central audit
     // coverage without changing the PR-CTM-01 event enum midstream.
     await writeCloseTaskAuditLog({

@@ -35,6 +35,7 @@
     "test:close-tasks:prctm03": "node scripts/test-close-task-prctm03-contract.js",
     "test:close-tasks:materialization": "node scripts/test-close-task-materialization.js",
     "test:close-tasks:prctm05": "node scripts/test-close-task-prctm05-cockpit-alerts.js",
+    "test:close-tasks:prctm07": "node scripts/test-close-task-prctm07-evidence-comments-audit.js",
     "test:cash-pr06": "node scripts/test-cash-pr06-register-session.js",
     "test:cash-pr07": "node scripts/test-cash-pr07-lifecycle.js",
     "test:cash-pr08": "node scripts/test-cash-pr08-gl-posting.js",

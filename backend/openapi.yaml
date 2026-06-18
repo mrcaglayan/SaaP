@@ -14363,6 +14363,58 @@
         }
       }
     },
+    "/api/v1/close/tasks/{taskId}/evidence/drafts": {
+      "post": {
+        "tags": [
+          "Close"
+        ],
+        "operationId": "postApiV1CloseTasksTaskidEvidenceDrafts",
+        "summary": "Auto-generated: POST /api/v1/close/tasks/{taskId}/evidence/drafts",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "taskId",
+            "required": true,
+            "description": "taskId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/close/tasks/{taskId}/evidence/{evidenceId}": {
       "delete": {
         "tags": [

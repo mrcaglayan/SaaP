@@ -1,151 +1,259 @@
-Checked `project5.zip`. Overall: **PR-CTM-01 through PR-CTM-05 are mostly okay**, and the implementation is still aligned with the final plan’s architecture: task layer on top of close cycles, not a second close engine.
+Checked `project7.zip`. Verdict: **PR-CTM-07 is mostly implemented correctly, but I found one important data-integrity/security issue before moving to PR-CTM-08.** The upload/download implementation is no longer a placeholder, comments now write audit/event coverage, and the frontend exposes upload/download properly. This matches the final plan’s PR-CTM-07 scope: real evidence upload/download, storage adapter integration, evidence/comment access through close-task scope, and audit hardening.
 
-## Verdict
+## Status
 
 ```txt
 PR-CTM-01: OK
 PR-CTM-02: OK
 PR-CTM-03: OK
-PR-CTM-04: OK, previous issues fixed
-PR-CTM-05: Mostly OK, but fix 2 items before PR-CTM-06
+PR-CTM-04: OK
+PR-CTM-05: OK
+PR-CTM-06: OK
+PR-CTM-07: Mostly OK, but fix 1 blocker before PR-CTM-08
 ```
 
-## Good confirmations
+## What looks good
 
-The previous PR-CTM-03 cycle-status bug is fixed. `assertCloseTaskCycleEditable()` now checks `cycle_status` / `cycleStatus` before falling back to `status`, so task status is no longer confused with close-cycle status.
-
-The previous PR-CTM-04 issues are also fixed:
+The PR-CTM-07 files are implemented:
 
 ```txt
-AP_UNPOSTED_CLEARED      SYSTEM_CHECK
-AR_AGING_REVIEWED        MANUAL
-PAYROLL_POSTED           SOURCE_STATUS
-FX_RATES_ENTERED         SYSTEM_CHECK
-DEPRECIATION_POSTED      SOURCE_STATUS
-TRIAL_BALANCE_REVIEWED   MANUAL
+backend/src/services/close.task-evidence.service.js
+backend/src/services/close.task-comments.service.js
+backend/src/services/close.task-events.service.js
+backend/src/routes/close.tasks.routes.js
+frontend/src/pages/CloseTaskBoardPage.jsx
+frontend/src/api/closeTasks.js
 ```
 
-`LOCAL_CLOSE_PACK_REVIEWER` is now backed by a real local close pack reviewer lookup instead of always falling back to cycle owner.
-
-PR-CTM-05 files are present:
+Evidence upload/download is now real, not `501`:
 
 ```txt
-backend/src/services/close.alerts-persistence.service.js
-backend/src/services/close.blocker-composer.service.js
-backend/src/services/close.tasks.service.js
-backend/src/services/close.cycles.service.js
-backend/scripts/test-close-task-prctm05-cockpit-alerts.js
+PUT /api/v1/close/tasks/:taskId/evidence/:evidenceId/content
+GET /api/v1/close/tasks/:taskId/evidence/:evidenceId/download
 ```
 
-And the main PR-CTM-05 behavior is implemented:
+The service now handles:
 
 ```txt
-task cockpit summary
-task counts
-cancelled count
-sourceCheckFailed count
-myOpenTasks
-byFamily
-lockBlocking count
-standard CLOSE_TASK_INSTANCE blockers
-task blockers merged into close blockers
-durable task alerts
-alert upsert
-alert stale-resolution
-task-alert resolution on terminal statuses
-cockpit integration
-lockCycle integration
-manager list lock-readiness integration
+binary upload
+storage path creation
+gzip/none compression
+sha256 hash
+stored size verification
+read-back integrity check
+download integrity check
+previous file cleanup after replacement
+soft removal of task-evidence link
+reattach behavior
 ```
 
-## Fix 1 — PR-CTM-05 test has a wrong expectation
-
-In `test-close-task-prctm05-cockpit-alerts.js`, task `id = 5` is:
+The frontend now exposes:
 
 ```txt
-status = APPROVED
-required_for_cycle_lock = 1
-evidence_required = 1
-evidence_count = 0
+choose file
+upload
+download
+remove evidence
+comments
 ```
 
-According to the plan and implementation, this **should block lock** because approved evidence-required tasks still need active evidence.
+The comment side is also improved:
 
-The implementation correctly creates a lock blocker for it.
+```txt
+COMMENT_ADDED writes close_task_events
+COMMENT_ADDED writes central audit_logs
+comment delete writes central audit_logs
+comments use CLOSE_TASK_INSTANCE source ref
+```
 
-But the test currently says:
+The PR-CTM-07 static tests pass:
+
+```bash
+npm run test:close-tasks:source-refs
+npm run test:close-tasks:generic-scope-backfill
+npm run test:close-tasks:prctm07
+```
+
+I also syntax-checked the main PR-CTM-07 backend files successfully.
+
+---
+
+# Blocker — attaching evidence can hijack evidence from another module/task
+
+In `attachCloseTaskEvidence()`, the service loads any `evidence_objects` row by:
+
+```sql
+tenant_id = ?
+AND id = ?
+```
+
+Then it updates that same evidence object:
+
+```sql
+SET source_ref_type = 'CLOSE_TASK_INSTANCE',
+    source_ref_id = taskId,
+    scope_type = task.rbac_scope_type,
+    scope_id = task.rbac_scope_id,
+    scope_key = task.rbac_scope_key
+```
+
+That means a user who has `close.task.work` on one task could enter an evidence object ID belonging to another source, for example:
+
+```txt
+CARI_DOCUMENT evidence
+LOCAL_CLOSE_PACK evidence
+FIXED_ASSET evidence
+another close task evidence
+```
+
+and the system would reassign that evidence object to the current task.
+
+That is dangerous because it can:
+
+```txt
+steal evidence from another module
+break the original document’s evidence link
+change source_ref_type/source_ref_id unexpectedly
+cause cross-scope evidence leakage
+corrupt evidence ownership/history
+```
+
+## Required fix
+
+Before attaching an existing evidence object, enforce one of these rules.
+
+### Recommended rule
+
+Allow attach only when the evidence object is already one of these:
+
+```txt
+source_ref_type = 'CLOSE_TASK_INSTANCE' AND source_ref_id = current task id
+```
+
+or:
+
+```txt
+source_ref_type is NULL / explicitly unassigned draft
+```
+
+But because the original `evidence_objects.source_ref_type` is `NOT NULL`, you likely do not have true unassigned drafts yet.
+
+So practically, for now:
+
+```txt
+Reject evidence objects whose source_ref_type/source_ref_id belong to another source.
+```
+
+Example service guard:
 
 ```js
-assert(!alertPayloads.some((row) => row.alertKey.startsWith("TASK:5:")));
+const existingSourceType = String(
+  evidenceObject.source_ref_type || "",
+).toUpperCase();
+const existingSourceId = parsePositiveInt(evidenceObject.source_ref_id);
+
+if (
+  existingSourceType &&
+  (existingSourceType !== CLOSE_TASK_INSTANCE || existingSourceId !== taskId)
+) {
+  throw badRequest("Evidence object is already attached to another source");
+}
 ```
 
-That expectation is wrong. It should expect:
-
-```js
-assert(alertPayloads.some((row) => row.alertKey === "TASK:5:BLOCKED"));
-```
-
-Otherwise, once dependencies are installed and the test can run, this test will fail.
-
-## Fix 2 — source-check failures are counted but not alert/blocker-aware yet
-
-`buildCloseTaskCockpitSummaryFromRows()` correctly counts:
+Then add one of these next:
 
 ```txt
-sourceCheckFailed
+Option A: add a close-task evidence draft creation endpoint
+Option B: create evidence object automatically when uploading from task UI
 ```
 
-for statuses like:
+For clean UX, I would add this route:
 
 ```txt
-FAILED
-ERROR
-BLOCKED
+POST /api/v1/close/tasks/:taskId/evidence/drafts
 ```
 
-But `buildCloseTaskLockBlockersFromRows()` and `buildCloseTaskAlertPayloadsFromRows()` do not yet create a specific blocker/alert for failed source checks.
+Payload:
 
-The plan says failed source checks should make task blockers and durable alerts explain the failed check instead of making users guess from JSON.
+```json
+{
+  "fileName": "bank-reconciliation.pdf",
+  "displayName": "Bank reconciliation evidence",
+  "contentType": "application/pdf",
+  "note": "May close evidence"
+}
+```
 
-Add this behavior:
+It should create `evidence_objects` already scoped to:
 
 ```txt
-If task is not terminal
-and source_check_status is FAILED / ERROR / BLOCKED
-then cockpit should expose a clear source-check failed state.
+source_ref_type = CLOSE_TASK_INSTANCE
+source_ref_id = taskId
+scope_type = task.rbac_scope_type
+scope_id = task.rbac_scope_id
+scope_key = task.rbac_scope_key
 ```
 
-For durable alert:
+Then upload content to that evidence row.
+
+This avoids the current “type evidence object id manually” workflow and prevents accidental/harmful reassignment.
+
+---
+
+## Smaller follow-ups, not blockers
+
+### 1. Comment delete has audit but no task event
+
+Current implementation intentionally avoids adding `COMMENT_DELETED` to `close_task_events`, and writes only central audit. That is acceptable for now because you left a code comment explaining it.
+
+For full lifecycle consistency, later I would add:
 
 ```txt
-alertKey: TASK:<taskId>:SOURCE_CHECK_FAILED
-alertCode: CLOSE_TASK_SOURCE_CHECK_FAILED
-alertType: BLOCKED
-severity: HIGH
-blockingAction: REFRESH_SOURCE_CHECK or RESOLVE_SOURCE_CHECK
+COMMENT_DELETED
 ```
 
-For lock blockers:
+to `close_task_events`.
+
+### 2. Comment delete does not check affected row count
+
+If a nonexistent comment ID is deleted, the service still returns the refreshed comment list. Better behavior would be:
 
 ```txt
-If required_for_cycle_lock = true
-and source_check_status is FAILED / ERROR / BLOCKED
-then block cycle lock even if the task status is APPROVED.
+if affectedRows = 0, return 404
 ```
 
-This matters especially for future `SYSTEM_CHECK`, `SOURCE_STATUS`, and `HYBRID_REVIEW` tasks.
+Not a blocker.
+
+### 3. Evidence object draft UX is still rough
+
+The frontend currently asks the user for:
+
+```txt
+Evidence object id
+```
+
+That is acceptable technically, but not good for normal users. PR-CTM-08 or a small PR-CTM-07 patch should add a proper “Create evidence draft + upload file” flow.
+
+---
 
 ## Test status
 
-Syntax checks passed for the new PR-CTM-05 files.
+These passed from the uploaded zip:
 
-I could not run the full backend test command because the uploaded zip does not include installed dependencies. The failure was:
+```bash
+cd backend
+npm run test:close-tasks:source-refs
+npm run test:close-tasks:generic-scope-backfill
+npm run test:close-tasks:prctm07
+```
+
+DB-dependent tests still cannot run here because dependencies are not installed in the extracted zip. The expected error remains:
 
 ```txt
 Cannot find package 'mysql2'
 ```
 
-After installing dependencies, run:
+Run locally after `npm install`:
 
 ```bash
 cd backend
@@ -156,17 +264,15 @@ npm run test:close-tasks:sod
 npm run test:close-tasks:prctm03
 npm run test:close-tasks:materialization
 npm run test:close-tasks:prctm05
+npm run test:close-tasks:prctm07
 ```
 
-## Final assessment
+## Final verdict
 
-You are in good shape.
-
-Before moving to PR-CTM-06, I would patch only these:
+Do **not** move to PR-CTM-08 yet until this is patched:
 
 ```txt
-1. Fix the PR-CTM-05 test expectation for APPROVED + missing required evidence.
-2. Add explicit source-check failed blocker / durable alert handling.
+Prevent close-task evidence attach from reassigning evidence objects that already belong to another source.
 ```
 
-After those two fixes, PR-CTM-05 is acceptable.
+After that patch, PR-CTM-07 will be acceptable. Everything else is either good or a small follow-up.
