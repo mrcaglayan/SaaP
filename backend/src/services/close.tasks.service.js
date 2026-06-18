@@ -966,6 +966,10 @@ function buildTaskListWhere(filters = {}, actorCtx = {}) {
     clauses.push("cti.work_scope_id = ?");
     params.push(parsePositiveInt(filters.workScopeId));
   }
+  if (filters.bookId) {
+    clauses.push("cti.book_id = ?");
+    params.push(parsePositiveInt(filters.bookId));
+  }
   if (filters.ownerUserId) {
     clauses.push("cti.owner_user_id = ?");
     params.push(parsePositiveInt(filters.ownerUserId));
@@ -1131,6 +1135,14 @@ function buildCloseTaskLockBlocker(row = {}) {
   };
 }
 
+function sortCloseTaskQueueRows(rows = []) {
+  return [...rows].sort((left, right) => {
+    const leftDue = parseDateTimeMs(left.dueAt) ?? Number.MAX_SAFE_INTEGER;
+    const rightDue = parseDateTimeMs(right.dueAt) ?? Number.MAX_SAFE_INTEGER;
+    return leftDue - rightDue || Number(left.id || 0) - Number(right.id || 0);
+  });
+}
+
 function summarizeTaskFamily(rows = []) {
   const byFamily = new Map();
   for (const row of rows) {
@@ -1157,6 +1169,59 @@ function summarizeTaskFamily(rows = []) {
   return [...byFamily.values()].sort((left, right) =>
     String(left.taskFamily || "").localeCompare(String(right.taskFamily || "")),
   );
+}
+
+/**
+ * Build dashboard-ready close task queues from preloaded task rows.
+ */
+export function buildCloseTaskDashboardQueuesFromRows(
+  rows = [],
+  { userId = null, reviewableTaskIds = [], limit = 10, now = new Date() } = {},
+) {
+  const normalizedUserId = parsePositiveInt(userId);
+  const normalizedLimit = Math.max(1, Math.min(Number(limit || 10), 50));
+  const reviewableSet = new Set(
+    (reviewableTaskIds || []).map((value) => parsePositiveInt(value)).filter(Boolean),
+  );
+  const normalizedRows = rows.map((row) => {
+    const mapped = mapCloseTaskCockpitRow(row, now);
+    return {
+      ...mapped,
+      lockBlocking: isCloseTaskLockBlocking(mapped),
+    };
+  });
+  const activeRows = normalizedRows.filter((row) => !isCloseTaskTerminalStatus(row.status));
+  const myDueTasks = sortCloseTaskQueueRows(
+    activeRows.filter((row) => normalizedUserId && row.ownerUserId === normalizedUserId),
+  );
+  const reviewTasks = sortCloseTaskQueueRows(
+    activeRows.filter((row) => row.status === "SUBMITTED" && reviewableSet.has(row.id)),
+  );
+  const returnedTasks = sortCloseTaskQueueRows(
+    activeRows.filter(
+      (row) =>
+        normalizedUserId &&
+        row.ownerUserId === normalizedUserId &&
+        row.status === "RETURNED",
+    ),
+  );
+  const overdueLockRequiredTasks = sortCloseTaskQueueRows(
+    activeRows.filter((row) => row.requiredForCycleLock && row.overdue),
+  );
+
+  return {
+    limit: normalizedLimit,
+    counts: {
+      myDueTasks: myDueTasks.length,
+      reviewTasks: reviewTasks.length,
+      returnedTasks: returnedTasks.length,
+      overdueLockRequiredTasks: overdueLockRequiredTasks.length,
+    },
+    myDueTasks: myDueTasks.slice(0, normalizedLimit),
+    reviewTasks: reviewTasks.slice(0, normalizedLimit),
+    returnedTasks: returnedTasks.slice(0, normalizedLimit),
+    overdueLockRequiredTasks: overdueLockRequiredTasks.slice(0, normalizedLimit),
+  };
 }
 
 /**
@@ -1258,6 +1323,39 @@ async function listCloseTaskRowsForCycle(cycleId, actorCtx = {}, options = {}) {
   return result.rows || [];
 }
 
+async function listCloseTaskRowsForFilters(filters = {}, actorCtx = {}) {
+  const { where, params } = buildTaskListWhere(filters, actorCtx);
+  const result = await query(
+    `SELECT
+       cti.*,
+       cc.status AS cycle_status,
+       COALESCE(evidence.evidence_count, 0) AS evidence_count
+     FROM close_task_instances cti
+     JOIN close_cycles cc
+       ON cc.id = cti.close_cycle_id
+      AND cc.tenant_id = cti.tenant_id
+     LEFT JOIN (
+       SELECT
+         cte.tenant_id,
+         cte.close_task_instance_id,
+         COUNT(*) AS evidence_count
+       FROM close_task_evidence cte
+       JOIN evidence_objects eo
+         ON eo.id = cte.evidence_object_id
+        AND eo.tenant_id = cte.tenant_id
+       WHERE cte.status = 'ACTIVE'
+         AND eo.status = 'ACTIVE'
+       GROUP BY cte.tenant_id, cte.close_task_instance_id
+     ) evidence
+       ON evidence.tenant_id = cti.tenant_id
+      AND evidence.close_task_instance_id = cti.id
+     WHERE ${where}
+     ORDER BY cti.due_at IS NULL ASC, cti.due_at ASC, cti.id ASC`,
+    params,
+  );
+  return result.rows || [];
+}
+
 /**
  * Read the close-cockpit task summary for one cycle.
  */
@@ -1286,6 +1384,55 @@ export async function listCloseTaskLockBlockers(cycleId, actorCtx = {}) {
     respectVisibility: false,
   });
   return buildCloseTaskLockBlockersFromRows(rows);
+}
+
+/**
+ * Read a task summary for all visible tasks matching the task-board filters.
+ */
+export async function buildCloseTaskSummary(filters = {}, actorCtx = {}) {
+  const tenantId = parsePositiveInt(filters.tenantId || actorCtx.tenantId);
+  if (!tenantId) {
+    throw badRequest("tenantId is required");
+  }
+  const rows = await listCloseTaskRowsForFilters({ ...filters, tenantId }, actorCtx);
+  return buildCloseTaskCockpitSummaryFromRows(rows, {
+    userId: actorCtx.userId,
+  });
+}
+
+/**
+ * Read dashboard queues for the current user without requiring cockpit access.
+ */
+export async function listMyCloseTaskQueues(input = {}, actorCtx = {}) {
+  const tenantId = parsePositiveInt(input.tenantId || actorCtx.tenantId);
+  const userId = ensureUserId({ ...actorCtx, userId: input.userId || actorCtx.userId });
+  if (!tenantId) {
+    throw badRequest("tenantId is required");
+  }
+  const rows = await listCloseTaskRowsForFilters(
+    {
+      tenantId,
+      closeCycleId: parsePositiveInt(input.closeCycleId),
+    },
+    actorCtx,
+  );
+  const reviewableTaskIds = [];
+  for (const row of rows) {
+    if (String(row.status || "").trim().toUpperCase() !== "SUBMITTED") {
+      continue;
+    }
+    // Reviewer queues must match the same authority check used by approve/return.
+    // This includes scoped task admins, while still excluding users without review authority.
+    // eslint-disable-next-line no-await-in-loop
+    if (await checkUserCanReviewCloseTask(userId, tenantId, row, query)) {
+      reviewableTaskIds.push(parsePositiveInt(row.id));
+    }
+  }
+  return buildCloseTaskDashboardQueuesFromRows(rows, {
+    userId,
+    reviewableTaskIds,
+    limit: input.limit,
+  });
 }
 
 /**

@@ -3,9 +3,11 @@ import { requireAnyPermission, requirePermission } from "../middleware/rbac.js";
 import { asyncHandler, badRequest, parsePositiveInt } from "./_utils.js";
 import {
   approveCloseTask,
+  buildCloseTaskSummary,
   cancelCloseTask,
   createManualCloseTask,
   getCloseTaskById,
+  listMyCloseTaskQueues,
   listCloseTasks,
   refreshCloseTaskSourceCheck,
   reopenCloseTask,
@@ -41,6 +43,7 @@ import { listCloseTaskEvents } from "../services/close.task-events.service.js";
 import {
   parseCloseCycleIdParam,
   parseCloseCycleTaskListInput,
+  parseCloseCycleTaskSummaryInput,
   parseCloseTaskActionInput,
   parseCloseTaskCommentCreateInput,
   parseCloseTaskCommentDeleteInput,
@@ -50,7 +53,9 @@ import {
   parseCloseTaskEvidenceMutationInput,
   parseCloseTaskIdParam,
   parseCloseTaskListInput,
+  parseCloseTaskMyQueuesInput,
   parseCloseTaskPatchInput,
+  parseCloseTaskSummaryInput,
   parseCloseTaskTemplateCreateInput,
   parseCloseTaskTemplateIdParam,
   parseCloseTaskTemplateListInput,
@@ -165,6 +170,36 @@ router.get(
     const input = parseCloseTaskListInput(req);
     const result = await listCloseTasks(input, buildActorCtx(input, req));
     return res.json({ tenantId: input.tenantId, ...result });
+  }),
+);
+
+router.get(
+  "/tasks/my",
+  requirePermission("close.task.read"),
+  asyncHandler(async (req, res) => {
+    const input = parseCloseTaskMyQueuesInput(req);
+    const result = await listMyCloseTaskQueues(input, buildActorCtx(input, req));
+    return res.json({ tenantId: input.tenantId, ...result });
+  }),
+);
+
+router.get(
+  "/tasks/summary",
+  requirePermission("close.task.read"),
+  asyncHandler(async (req, res) => {
+    const input = parseCloseTaskSummaryInput(req);
+    const summary = await buildCloseTaskSummary(input, buildActorCtx(input, req));
+    return res.json({ tenantId: input.tenantId, summary });
+  }),
+);
+
+router.get(
+  "/cycles/:cycleId/tasks/summary",
+  requirePermission("close.task.read", { resolveScope: readCycleScope }),
+  asyncHandler(async (req, res) => {
+    const input = parseCloseCycleTaskSummaryInput(req);
+    const summary = await buildCloseTaskSummary(input, buildActorCtx(input, req));
+    return res.json({ tenantId: input.tenantId, cycleId: input.closeCycleId, summary });
   }),
 );
 

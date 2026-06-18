@@ -348,6 +348,7 @@ export default function CloseTaskBoardPage() {
   const rbacScopeIdFilter = String(searchParams.get("rbacScopeId") || "");
   const workScopeTypeFilter = String(searchParams.get("workScopeType") || "");
   const workScopeIdFilter = String(searchParams.get("workScopeId") || "");
+  const bookIdFilter = String(searchParams.get("bookId") || "");
   const ownerUserIdFilter = String(searchParams.get("ownerUserId") || "");
   const reviewerUserIdFilter = String(searchParams.get("reviewerUserId") || "");
 
@@ -500,6 +501,7 @@ export default function CloseTaskBoardPage() {
           rbacScopeId: toPositiveInt(rbacScopeIdFilter) || undefined,
           workScopeType: workScopeTypeFilter || undefined,
           workScopeId: toPositiveInt(workScopeIdFilter) || undefined,
+          bookId: toPositiveInt(bookIdFilter) || undefined,
           ownerUserId: toPositiveInt(ownerUserIdFilter) || undefined,
           reviewerUserId: toPositiveInt(reviewerUserIdFilter) || undefined,
           dueState: dueStateFilter || undefined,
@@ -538,6 +540,7 @@ export default function CloseTaskBoardPage() {
     canReadTasks,
     dueStateFilter,
     evidenceMissingFilter,
+    bookIdFilter,
     l,
     ownerUserIdFilter,
     queryFilter,
@@ -1012,6 +1015,15 @@ export default function CloseTaskBoardPage() {
               <input
                 value={workScopeIdFilter}
                 onChange={(event) => updateFilter("workScopeId", event.target.value)}
+                className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                inputMode="numeric"
+              />
+            </div>
+            <div>
+              <FieldLabel>{l("Book id", "Defter id")}</FieldLabel>
+              <input
+                value={bookIdFilter}
+                onChange={(event) => updateFilter("bookId", event.target.value)}
                 className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                 inputMode="numeric"
               />

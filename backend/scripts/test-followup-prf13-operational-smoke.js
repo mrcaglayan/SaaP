@@ -878,7 +878,7 @@ async function ensureApproverUserForTenant(tenantId) {
     approverUserId !== requesterUserId,
     `Approver user must differ from requester user for maker-checker (tenant ${tenantId})`
   );
-  await assignTestFullAccessRoleToUser(tenantId, userId);
+  await assignTestFullAccessRoleToUser(tenantId, approverUserId);
 
   return {
     requesterUserId,
@@ -1055,7 +1055,7 @@ async function approveGateToCompletion({
         userId: approverUserId,
         decisionNote: `PR-F13 operational smoke approve step ${i + 1}`,
       },
-      assertScopeAccess: () => {},
+      assertScopeAccess: () => { },
     });
     stepCount = decision?.decisions?.length || stepCount;
     if (String(decision?.row?.status || "").toUpperCase() === "APPROVED") {

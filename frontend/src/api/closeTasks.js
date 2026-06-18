@@ -53,11 +53,37 @@ export async function listCloseTasks(params = {}) {
 }
 
 /**
+ * Read dashboard queues for the authenticated user's close tasks.
+ */
+export async function getMyCloseTaskQueues(params = {}) {
+  const response = await api.get(`/api/v1/close/tasks/my${toQueryString(params)}`);
+  return response.data;
+}
+
+/**
+ * Read task summary counts using the same filters as the task board.
+ */
+export async function getCloseTaskSummary(params = {}) {
+  const response = await api.get(`/api/v1/close/tasks/summary${toQueryString(params)}`);
+  return response.data;
+}
+
+/**
  * Read close checklist task instances for one cycle.
  */
 export async function listCloseCycleTasks(cycleId, params = {}) {
   const response = await api.get(
     `/api/v1/close/cycles/${cycleId}/tasks${toQueryString(params)}`,
+  );
+  return response.data;
+}
+
+/**
+ * Read close checklist task summary for one cycle.
+ */
+export async function getCloseCycleTaskSummary(cycleId, params = {}) {
+  const response = await api.get(
+    `/api/v1/close/cycles/${cycleId}/tasks/summary${toQueryString(params)}`,
   );
   return response.data;
 }

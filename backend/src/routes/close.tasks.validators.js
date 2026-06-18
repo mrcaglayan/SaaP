@@ -384,6 +384,7 @@ export function parseCloseTaskListInput(req) {
       req.query?.workScopeId ?? req.query?.work_scope_id,
       "workScopeId",
     ),
+    bookId: optionalPositiveInt(req.query?.bookId ?? req.query?.book_id, "bookId"),
     ownerUserId: optionalPositiveInt(req.query?.ownerUserId ?? req.query?.owner_user_id, "ownerUserId"),
     reviewerUserId: optionalPositiveInt(
       req.query?.reviewerUserId ?? req.query?.reviewer_user_id,
@@ -398,10 +399,37 @@ export function parseCloseTaskListInput(req) {
   };
 }
 
+/** Parse close task summary filters using the same contract as task lists. */
+export function parseCloseTaskSummaryInput(req) {
+  return parseCloseTaskListInput(req);
+}
+
+/** Parse dashboard queue filters for the authenticated user's close tasks. */
+export function parseCloseTaskMyQueuesInput(req) {
+  const pagination = parsePagination(req.query, { limit: 10, offset: 0, maxLimit: 50 });
+  return {
+    tenantId: requireTenantId(req),
+    userId: requireUserId(req),
+    closeCycleId: optionalPositiveInt(
+      req.query?.closeCycleId ?? req.query?.close_cycle_id,
+      "closeCycleId",
+    ),
+    limit: pagination.limit,
+  };
+}
+
 /** Parse list filters for tasks under one close cycle. */
 export function parseCloseCycleTaskListInput(req) {
   return {
     ...parseCloseTaskListInput(req),
+    closeCycleId: parseCloseCycleIdParam(req),
+  };
+}
+
+/** Parse cycle-scoped task summary filters. */
+export function parseCloseCycleTaskSummaryInput(req) {
+  return {
+    ...parseCloseTaskSummaryInput(req),
     closeCycleId: parseCloseCycleIdParam(req),
   };
 }

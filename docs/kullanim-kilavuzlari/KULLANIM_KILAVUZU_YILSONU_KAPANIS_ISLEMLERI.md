@@ -30,6 +30,10 @@ Bu dokumanin amaci:
    - Rota: `/app/ayarlar/hesap-plani-ayarlari`
 4. Revenue Recognition operasyon modulu  
    - Rota: `/app/gelecek-yillar-gelirleri`
+5. Kapanis Gorevleri panosu  
+   - Rota: `/app/donem-sonu-islemler/yillik/kapanis-gorevleri`
+6. Kapanis Gorev Sablonlari  
+   - Rota: `/app/donem-sonu-islemler/yillik/kapanis-gorev-sablonlari`
 
 ---
 
@@ -114,6 +118,23 @@ Kural:
 1. Uzun ve kisa vade icin ayni hesap secmeyin.
 2. Hesaplar aktif ve postlanabilir olmali.
 3. Hesap secili legal entity chart kapsaminda olmali.
+
+---
+
+## 6A) Kapanis Gorevleri ve Cockpit
+
+Kapanis gorevleri, destek cizelgesi veya mutabakat motorunun yerine gecmez. Gorev panosu; banka mutabakati kontrol edildi, AP acik belgeler temizlendi, denetim kaniti eklendi gibi insan sahipli adimlari takip etmek icindir.
+
+Temel akis:
+
+1. Gorev sahibi `NOT_STARTED` veya `IN_PROGRESS` gorevi calisir.
+2. Kanit gerekiyorsa gorev seviyesinde kanit ekler.
+3. Gorevi `SUBMITTED` yapar.
+4. Inceleyen kisi gorevi `APPROVED` yapar veya neden yazarak `RETURNED` yapar.
+5. Istisna gerekiyorsa yetkili kisi zorunlu nedenle `WAIVED` yapar.
+6. Yanlis acilmis manuel gorevler `CANCELLED` yapilir; bu bir waiver degildir.
+
+Cockpit tarafinda sadece `required_for_cycle_lock = true` olan kapanis gorevleri kilit bloklayabilir. `APPROVED`, `WAIVED` ve `CANCELLED` gorevler cozulmus kabul edilir. Book bazli gorev aramalarinda `bookId` filtresini kullanin.
 
 ---
 

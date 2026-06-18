@@ -16,6 +16,7 @@ import {
   getOpsPayrollCloseStatus,
   getOpsPayrollImportHealth,
 } from "../api/opsDashboard.js";
+import { getMyCloseTaskQueues } from "../api/closeTasks.js";
 import { getInventoryWorkQueueSummary } from "../api/inventory.js";
 import { listExceptionWorkbench } from "../api/exceptionsWorkbench.js";
 import { getLocalClosePack, listLocalClosePacks } from "../api/localClosePacks.js";
@@ -37,6 +38,8 @@ const LOCAL_CLOSE_WORKSPACE_PATH =
   "/app/donem-sonu-islemler/yillik/yerel-kapanis-paketleri";
 const YEAR_END_REVREC_PATH =
   "/app/donem-sonu-islemler/yillik/kapanis-islemleri";
+const CLOSE_TASKS_PATH =
+  "/app/donem-sonu-islemler/yillik/kapanis-gorevleri";
 
 function toInt(value, fallback = 0) {
   const parsed = Number(value);
@@ -418,6 +421,7 @@ export default function Dashboard() {
   const canReadConsolidationRuns = hasPermission("consolidation.run.read");
   const canReadConsolidationGroups = hasPermission("consolidation.group.read");
   const canReadLocalClose = hasPermission("ouclose.read");
+  const canReadCloseTasks = hasPermission("close.task.read");
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -434,6 +438,7 @@ export default function Dashboard() {
     fixedAssetActivationAttention: null,
     fixedAssetLateCatchUpAttention: null,
     fixedAssetDepreciationAttention: null,
+    closeTasks: null,
   });
   const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [notificationsError, setNotificationsError] = useState("");
@@ -725,6 +730,13 @@ export default function Dashboard() {
       });
     }
 
+    if (canReadCloseTasks) {
+      requestEntries.push({
+        key: "closeTasks",
+        run: () => getMyCloseTaskQueues({ limit: 8 }),
+      });
+    }
+
     if (requestEntries.length === 0) {
       setError("");
       setLoading(false);
@@ -740,6 +752,7 @@ export default function Dashboard() {
         fixedAssetActivationAttention: null,
         fixedAssetLateCatchUpAttention: null,
         fixedAssetDepreciationAttention: null,
+        closeTasks: null,
       });
       setLastRefreshedAt(new Date().toISOString());
       return;
@@ -764,6 +777,7 @@ export default function Dashboard() {
         fixedAssetActivationAttention: null,
         fixedAssetLateCatchUpAttention: null,
         fixedAssetDepreciationAttention: null,
+        closeTasks: null,
       };
 
       const failedKeys = [];
@@ -801,6 +815,7 @@ export default function Dashboard() {
     canReadExceptions,
     canReadFixedAssetAttention,
     canReadInventory,
+    canReadCloseTasks,
     canReadOps,
     fixedAssetScopeParams,
     inventoryScopeParams,
@@ -1208,6 +1223,23 @@ export default function Dashboard() {
           fiscalPeriodId: consolidationLocalClose.firstCentralPack.fiscalPeriodId,
         })
       : YEAR_END_REVREC_PATH);
+  const closeTaskQueues = snapshot.closeTasks || {};
+  const closeTaskCounts = closeTaskQueues.counts || {};
+  const closeTaskQueueTotal =
+    toInt(closeTaskCounts.myDueTasks, 0) +
+    toInt(closeTaskCounts.reviewTasks, 0) +
+    toInt(closeTaskCounts.returnedTasks, 0) +
+    toInt(closeTaskCounts.overdueLockRequiredTasks, 0);
+  const closeTaskPreviewRows = [
+    ...(Array.isArray(closeTaskQueues.reviewTasks) ? closeTaskQueues.reviewTasks : []),
+    ...(Array.isArray(closeTaskQueues.returnedTasks) ? closeTaskQueues.returnedTasks : []),
+    ...(Array.isArray(closeTaskQueues.myDueTasks) ? closeTaskQueues.myDueTasks : []),
+  ]
+    .filter(
+      (row, index, rows) =>
+        row?.id && rows.findIndex((candidate) => candidate?.id === row.id) === index,
+    )
+    .slice(0, 5);
   const refreshingDashboard = loading || consolidationReadiness.loading;
 
   return (
@@ -1394,6 +1426,127 @@ export default function Dashboard() {
           locked={!canReadFixedAssetAttention}
         />
       </div>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold uppercase tracking-[0.12em] text-slate-600">
+              {t("dashboard.closeTasks.title", "Close Checklist Tasks")}
+            </h2>
+            <p className="mt-1 text-sm text-slate-600">
+              {t(
+                "dashboard.closeTasks.hint",
+                "Your close-task workload, review queue, returned work, and overdue lock-required tasks."
+              )}
+            </p>
+          </div>
+          <Link
+            to={CLOSE_TASKS_PATH}
+            className="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            {t("dashboard.closeTasks.openBoard", "Open task board")}
+          </Link>
+        </div>
+        {!canReadCloseTasks ? (
+          <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            {t("dashboard.permissionRequired", "Permission required")}
+          </div>
+        ) : (
+          <>
+            <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <MetricCard
+                title={t("dashboard.closeTasks.myDue", "My Due Tasks")}
+                value={formatCount(closeTaskCounts.myDueTasks || 0)}
+                subtitle={t(
+                  "dashboard.closeTasks.myDueHint",
+                  "Open tasks assigned to you, excluding approved, waived, and cancelled tasks."
+                )}
+                to={CLOSE_TASKS_PATH}
+                ctaLabel={t("dashboard.openQueue", "Open queue")}
+                locked={!canReadCloseTasks}
+              />
+              <MetricCard
+                title={t("dashboard.closeTasks.reviewQueue", "Awaiting My Review")}
+                value={formatCount(closeTaskCounts.reviewTasks || 0)}
+                subtitle={t(
+                  "dashboard.closeTasks.reviewQueueHint",
+                  "Submitted tasks where you have reviewer authority."
+                )}
+                to={`${CLOSE_TASKS_PATH}?status=SUBMITTED`}
+                ctaLabel={t("dashboard.openQueue", "Open queue")}
+                locked={!canReadCloseTasks}
+              />
+              <MetricCard
+                title={t("dashboard.closeTasks.returned", "Returned To Me")}
+                value={formatCount(closeTaskCounts.returnedTasks || 0)}
+                subtitle={t(
+                  "dashboard.closeTasks.returnedHint",
+                  "Returned close tasks assigned back to you for correction."
+                )}
+                to={`${CLOSE_TASKS_PATH}?status=RETURNED`}
+                ctaLabel={t("dashboard.openQueue", "Open queue")}
+                locked={!canReadCloseTasks}
+              />
+              <MetricCard
+                title={t("dashboard.closeTasks.overdueLockRequired", "Overdue Lock-Required")}
+                value={formatCount(closeTaskCounts.overdueLockRequiredTasks || 0)}
+                subtitle={t(
+                  "dashboard.closeTasks.overdueLockRequiredHint",
+                  "Visible lock-required tasks past due, excluding terminal statuses."
+                )}
+                to={`${CLOSE_TASKS_PATH}?dueState=OVERDUE`}
+                ctaLabel={t("dashboard.openQueue", "Open queue")}
+                locked={!canReadCloseTasks}
+              />
+            </div>
+            {closeTaskQueueTotal === 0 ? (
+              <p className="mt-3 text-sm text-slate-600">
+                {t("dashboard.closeTasks.empty", "No close checklist task needs attention.")}
+              </p>
+            ) : null}
+            {closeTaskPreviewRows.length > 0 ? (
+              <div className="mt-4 overflow-x-auto">
+                <table className="min-w-full divide-y divide-slate-200 text-sm">
+                  <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                    <tr>
+                      <th className="px-3 py-2 text-left">{t("dashboard.closeTasks.task", "Task")}</th>
+                      <th className="px-3 py-2 text-left">{t("dashboard.closeTasks.status", "Status")}</th>
+                      <th className="px-3 py-2 text-left">{t("dashboard.closeTasks.due", "Due")}</th>
+                      <th className="px-3 py-2 text-left">{t("dashboard.closeTasks.scope", "Scope")}</th>
+                      <th className="px-3 py-2 text-left">{t("dashboard.closeTasks.action", "Action")}</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {closeTaskPreviewRows.map((row) => (
+                      <tr key={`dashboard-close-task-${row.id}`}>
+                        <td className="px-3 py-2">
+                          <p className="max-w-[260px] truncate font-semibold text-slate-900">
+                            {row.taskName || row.taskCode || `#${row.id}`}
+                          </p>
+                          <p className="text-xs text-slate-500">{formatEnumLabel(row.taskFamily)}</p>
+                        </td>
+                        <td className="px-3 py-2 text-slate-700">{formatEnumLabel(row.status)}</td>
+                        <td className="px-3 py-2 text-slate-700">{formatDateTimeLabel(row.dueAt)}</td>
+                        <td className="px-3 py-2 text-slate-700">
+                          {row.rbacScopeType ? `${row.rbacScopeType}:${row.rbacScopeId || "-"}` : "-"}
+                        </td>
+                        <td className="px-3 py-2">
+                          <Link
+                            to={buildAppPath(CLOSE_TASKS_PATH, { taskId: row.id })}
+                            className="rounded-md border border-cyan-300 bg-white px-2 py-1 text-xs font-semibold text-cyan-700"
+                          >
+                            {t("dashboard.closeTasks.open", "Open")}
+                          </Link>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+          </>
+        )}
+      </section>
 
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-3">

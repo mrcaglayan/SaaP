@@ -234,9 +234,15 @@ async function main() {
     packageJson.scripts["backfill:close-task-defaults"],
     "node scripts/backfill-close-task-defaults.js",
   );
-  assert.equal(
-    packageJson.scripts["test:close-tasks:materialization"],
-    "node scripts/test-close-task-materialization.js",
+  assert(
+    packageJson.scripts["test:close-tasks:materialization"].includes(
+      "node scripts/test-close-task-materialization.js",
+    ),
+  );
+  assert(
+    packageJson.scripts["test:close-tasks:materialization"].includes(
+      "node scripts/test-close-task-template-materialization.js",
+    ),
   );
   const closeCyclesSource = readSource("src/services/close.cycles.service.js");
   assert(closeCyclesSource.includes("materializeCloseTasksForCycle(cycle.id"));

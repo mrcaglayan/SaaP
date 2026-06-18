@@ -13283,6 +13283,48 @@
         }
       }
     },
+    "/api/v1/close/cycles/{cycleId}/tasks/summary": {
+      "get": {
+        "tags": [
+          "Close"
+        ],
+        "operationId": "getApiV1CloseCyclesCycleidTasksSummary",
+        "summary": "Auto-generated: GET /api/v1/close/cycles/{cycleId}/tasks/summary",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "cycleId",
+            "required": true,
+            "description": "cycleId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
     "/api/v1/close/cycles/{id}": {
       "get": {
         "tags": [
@@ -13866,6 +13908,66 @@
         ],
         "operationId": "getApiV1CloseTasks",
         "summary": "Auto-generated: GET /api/v1/close/tasks",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/close/tasks/my": {
+      "get": {
+        "tags": [
+          "Close"
+        ],
+        "operationId": "getApiV1CloseTasksMy",
+        "summary": "Auto-generated: GET /api/v1/close/tasks/my",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/close/tasks/summary": {
+      "get": {
+        "tags": [
+          "Close"
+        ],
+        "operationId": "getApiV1CloseTasksSummary",
+        "summary": "Auto-generated: GET /api/v1/close/tasks/summary",
         "responses": {
           "200": {
             "description": "Successful response",

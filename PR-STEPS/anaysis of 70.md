@@ -1,4 +1,4 @@
-Checked `project7.zip`. Verdict: **PR-CTM-07 is mostly implemented correctly, but I found one important data-integrity/security issue before moving to PR-CTM-08.** The upload/download implementation is no longer a placeholder, comments now write audit/event coverage, and the frontend exposes upload/download properly. This matches the final plan’s PR-CTM-07 scope: real evidence upload/download, storage adapter integration, evidence/comment access through close-task scope, and audit hardening.
+Checked `project8.zip`. Verdict: **PR-CTM-01 through PR-CTM-08 are mostly in good shape.** The PR-CTM-08 reporting/dashboard/my-tasks layer is implemented and aligned with the final plan’s PR-CTM-08 scope. The PR-CTM-07 evidence ownership blocker I previously flagged is also fixed.
 
 ## Status
 
@@ -9,254 +9,197 @@ PR-CTM-03: OK
 PR-CTM-04: OK
 PR-CTM-05: OK
 PR-CTM-06: OK
-PR-CTM-07: Mostly OK, but fix 1 blocker before PR-CTM-08
+PR-CTM-07: OK after evidence ownership fix
+PR-CTM-08: OK, with one small OpenAPI follow-up
 ```
 
-## What looks good
+## Good confirmations
 
-The PR-CTM-07 files are implemented:
+### 1. PR-CTM-08 endpoints exist
+
+These routes are implemented in `backend/src/routes/close.tasks.routes.js`:
 
 ```txt
-backend/src/services/close.task-evidence.service.js
-backend/src/services/close.task-comments.service.js
-backend/src/services/close.task-events.service.js
-backend/src/routes/close.tasks.routes.js
-frontend/src/pages/CloseTaskBoardPage.jsx
-frontend/src/api/closeTasks.js
+GET /api/v1/close/tasks/my
+GET /api/v1/close/tasks/summary
+GET /api/v1/close/cycles/:cycleId/tasks/summary
 ```
 
-Evidence upload/download is now real, not `501`:
+They call:
 
 ```txt
-PUT /api/v1/close/tasks/:taskId/evidence/:evidenceId/content
-GET /api/v1/close/tasks/:taskId/evidence/:evidenceId/download
+listMyCloseTaskQueues()
+buildCloseTaskSummary()
 ```
 
-The service now handles:
+from `backend/src/services/close.tasks.service.js`.
 
-```txt
-binary upload
-storage path creation
-gzip/none compression
-sha256 hash
-stored size verification
-read-back integrity check
-download integrity check
-previous file cleanup after replacement
-soft removal of task-evidence link
-reattach behavior
-```
-
-The frontend now exposes:
-
-```txt
-choose file
-upload
-download
-remove evidence
-comments
-```
-
-The comment side is also improved:
-
-```txt
-COMMENT_ADDED writes close_task_events
-COMMENT_ADDED writes central audit_logs
-comment delete writes central audit_logs
-comments use CLOSE_TASK_INSTANCE source ref
-```
-
-The PR-CTM-07 static tests pass:
-
-```bash
-npm run test:close-tasks:source-refs
-npm run test:close-tasks:generic-scope-backfill
-npm run test:close-tasks:prctm07
-```
-
-I also syntax-checked the main PR-CTM-07 backend files successfully.
+That matches the PR-CTM-08 plan.
 
 ---
 
-# Blocker — attaching evidence can hijack evidence from another module/task
+### 2. Dashboard queue logic is correct
 
-In `attachCloseTaskEvidence()`, the service loads any `evidence_objects` row by:
-
-```sql
-tenant_id = ?
-AND id = ?
-```
-
-Then it updates that same evidence object:
-
-```sql
-SET source_ref_type = 'CLOSE_TASK_INSTANCE',
-    source_ref_id = taskId,
-    scope_type = task.rbac_scope_type,
-    scope_id = task.rbac_scope_id,
-    scope_key = task.rbac_scope_key
-```
-
-That means a user who has `close.task.work` on one task could enter an evidence object ID belonging to another source, for example:
+The dashboard queue builder is implemented:
 
 ```txt
-CARI_DOCUMENT evidence
-LOCAL_CLOSE_PACK evidence
-FIXED_ASSET evidence
-another close task evidence
+buildCloseTaskDashboardQueuesFromRows()
+listMyCloseTaskQueues()
 ```
 
-and the system would reassign that evidence object to the current task.
-
-That is dangerous because it can:
+It correctly excludes terminal statuses from active queues:
 
 ```txt
-steal evidence from another module
-break the original document’s evidence link
-change source_ref_type/source_ref_id unexpectedly
-cause cross-scope evidence leakage
-corrupt evidence ownership/history
+APPROVED
+WAIVED
+CANCELLED
 ```
 
-## Required fix
-
-Before attaching an existing evidence object, enforce one of these rules.
-
-### Recommended rule
-
-Allow attach only when the evidence object is already one of these:
+The returned queues include:
 
 ```txt
-source_ref_type = 'CLOSE_TASK_INSTANCE' AND source_ref_id = current task id
+myDueTasks
+reviewTasks
+returnedTasks
+overdueLockRequiredTasks
 ```
 
-or:
+This matches the plan:
 
 ```txt
-source_ref_type is NULL / explicitly unassigned draft
+My due tasks
+Submitted tasks awaiting my review
+Returned tasks assigned to me
+Overdue lock-required tasks
 ```
 
-But because the original `evidence_objects.source_ref_type` is `NOT NULL`, you likely do not have true unassigned drafts yet.
+---
 
-So practically, for now:
+### 3. Reviewer queue uses real reviewer authority
+
+This is important and it is implemented correctly.
+
+`listMyCloseTaskQueues()` does **not** simply list every task where `reviewer_user_id = current user`.
+
+It checks:
 
 ```txt
-Reject evidence objects whose source_ref_type/source_ref_id belong to another source.
+checkUserCanReviewCloseTask()
 ```
 
-Example service guard:
+So the reviewer queue only shows tasks where the actor has the required reviewer permission at the task RBAC scope.
 
-```js
-const existingSourceType = String(
-  evidenceObject.source_ref_type || "",
-).toUpperCase();
-const existingSourceId = parsePositiveInt(evidenceObject.source_ref_id);
+Good.
 
-if (
-  existingSourceType &&
-  (existingSourceType !== CLOSE_TASK_INSTANCE || existingSourceId !== taskId)
-) {
-  throw badRequest("Evidence object is already attached to another source");
-}
-```
+---
 
-Then add one of these next:
+### 4. Dashboard frontend is implemented
+
+`frontend/src/pages/Dashboard.jsx` now imports:
 
 ```txt
-Option A: add a close-task evidence draft creation endpoint
-Option B: create evidence object automatically when uploading from task UI
+getMyCloseTaskQueues
 ```
 
-For clean UX, I would add this route:
+and displays a Close Checklist Tasks widget with:
+
+```txt
+My Due Tasks
+Awaiting My Review
+Returned To Me
+Overdue Lock-Required
+```
+
+It only loads the widget when the user has:
+
+```txt
+close.task.read
+```
+
+So the dashboard does not require cockpit admin access.
+
+Good.
+
+---
+
+### 5. PR-CTM-07 evidence ownership issue is fixed
+
+The earlier dangerous behavior was that attaching evidence could reassign an evidence object from another module/source.
+
+That is now guarded in `close.task-evidence.service.js`.
+
+The service now rejects evidence objects already attached to another source or another close task, and it also adds:
 
 ```txt
 POST /api/v1/close/tasks/:taskId/evidence/drafts
 ```
 
-Payload:
+So task evidence can be created as a close-task-owned draft instead of hijacking another source’s evidence object.
 
-```json
-{
-  "fileName": "bank-reconciliation.pdf",
-  "displayName": "Bank reconciliation evidence",
-  "contentType": "application/pdf",
-  "note": "May close evidence"
-}
-```
-
-It should create `evidence_objects` already scoped to:
-
-```txt
-source_ref_type = CLOSE_TASK_INSTANCE
-source_ref_id = taskId
-scope_type = task.rbac_scope_type
-scope_id = task.rbac_scope_id
-scope_key = task.rbac_scope_key
-```
-
-Then upload content to that evidence row.
-
-This avoids the current “type evidence object id manually” workflow and prevents accidental/harmful reassignment.
+Good.
 
 ---
 
-## Smaller follow-ups, not blockers
+### 6. PR-CTM-07 comment delete hardening is improved
 
-### 1. Comment delete has audit but no task event
+Comment delete now checks affected rows and returns not found if the comment does not exist or is already inactive.
 
-Current implementation intentionally avoids adding `COMMENT_DELETED` to `close_task_events`, and writes only central audit. That is acceptable for now because you left a code comment explaining it.
-
-For full lifecycle consistency, later I would add:
-
-```txt
-COMMENT_DELETED
-```
-
-to `close_task_events`.
-
-### 2. Comment delete does not check affected row count
-
-If a nonexistent comment ID is deleted, the service still returns the refreshed comment list. Better behavior would be:
-
-```txt
-if affectedRows = 0, return 404
-```
-
-Not a blocker.
-
-### 3. Evidence object draft UX is still rough
-
-The frontend currently asks the user for:
-
-```txt
-Evidence object id
-```
-
-That is acceptable technically, but not good for normal users. PR-CTM-08 or a small PR-CTM-07 patch should add a proper “Create evidence draft + upload file” flow.
+That fixes the previous smaller issue.
 
 ---
 
-## Test status
+## One follow-up before PR-CTM-09
 
-These passed from the uploaded zip:
+### OpenAPI is stale for PR-CTM-08 endpoints
+
+I found the close-task OpenAPI section, but these new PR-CTM-08 routes are not present in `backend/openapi.yaml`:
+
+```txt
+/api/v1/close/tasks/my
+/api/v1/close/tasks/summary
+/api/v1/close/cycles/{cycleId}/tasks/summary
+```
+
+This is not a blocker if OpenAPI regeneration is planned for PR-CTM-09, because PR-CTM-09 explicitly covers OpenAPI/docs/tests.
+
+But before calling the module complete, run:
 
 ```bash
 cd backend
-npm run test:close-tasks:source-refs
-npm run test:close-tasks:generic-scope-backfill
-npm run test:close-tasks:prctm07
+npm run openapi:generate
+npm run check:openapi
 ```
 
-DB-dependent tests still cannot run here because dependencies are not installed in the extracted zip. The expected error remains:
+Then confirm those three paths appear.
+
+## Tiny cleanup, not a blocker
+
+In `attachCloseTaskEvidence()`, there is a duplicate object key:
+
+```js
+taskRow: task,
+taskRow: task,
+```
+
+JavaScript accepts this and the second value wins, so it does not break runtime. But remove the duplicate for cleanliness.
+
+## Test status
+
+The static syntax checks I ran passed for the main backend PR-CTM-08 files.
+
+The PR-CTM-08 test could not fully run in the extracted zip because dependencies are not installed here:
 
 ```txt
 Cannot find package 'mysql2'
 ```
 
-Run locally after `npm install`:
+That is expected for the uploaded zip.
+
+Run locally:
 
 ```bash
 cd backend
+npm install
 npm run test:close-tasks:source-refs
 npm run test:close-tasks:generic-scope-backfill
 npm run test:close-tasks:scope
@@ -265,14 +208,18 @@ npm run test:close-tasks:prctm03
 npm run test:close-tasks:materialization
 npm run test:close-tasks:prctm05
 npm run test:close-tasks:prctm07
+npm run test:close-tasks:prctm08
 ```
 
 ## Final verdict
 
-Do **not** move to PR-CTM-08 yet until this is patched:
+You can move to **PR-CTM-09**.
+
+No blocker found for PR-CTM-08. The main remaining work is exactly what PR-CTM-09 is supposed to cover:
 
 ```txt
-Prevent close-task evidence attach from reassigning evidence objects that already belong to another source.
+tests
+OpenAPI regeneration
+documentation
+final lifecycle/browser smoke checks
 ```
-
-After that patch, PR-CTM-07 will be acceptable. Everything else is either good or a small follow-up.

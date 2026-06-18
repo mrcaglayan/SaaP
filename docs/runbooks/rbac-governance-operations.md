@@ -19,6 +19,17 @@ Use this document for:
 - Legacy bank/workflow tables remain for audit and compatibility, not as alternate runtime engines.
 - Scoped delegation and field visibility are active governance features.
 
+## Close Task Roles
+
+Close checklist task management uses composable task roles instead of broad finance-admin access:
+- `CloseTaskViewer`: read close task boards, cockpit task panels, evidence, comments, and event history.
+- `CloseTaskPreparer`: work owned tasks and attach task evidence.
+- `CloseTaskReviewer`: return or approve submitted tasks.
+- `CloseTaskWaiverAuthority`: waive unresolved tasks with a mandatory reason.
+- `CloseTaskAdmin`: create, assign, reopen, cancel lock-required tasks, and maintain task templates.
+
+Maker-checker SoD warnings apply to `close.task.work` paired with `close.task.review` or `close.task.waive`. Treat overlaps as documented override risks, not normal role design.
+
 ## Fresh Tenant Bootstrap
 
 Run from [backend/package.json](/c:/Users/Maarif/Desktop/my-app/backend/package.json) scripts:
