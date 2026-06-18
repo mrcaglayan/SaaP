@@ -1825,7 +1825,7 @@ async function main() {
         assertScopeAccess: noScopeGuard,
         skipUnifiedApprovalGate: true,
       }),
-    { status: 403, includes: "Maker-checker violation" }
+    { status: 403, code: "SOD_VIOLATION" }
   );
 
   const closeIdempotencyKey = `PRP08_CLOSE_${stamp}`;

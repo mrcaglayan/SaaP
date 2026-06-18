@@ -310,9 +310,15 @@ function assertLifecycleContracts() {
   assert(CLOSE_TASK_AUDITED_EVENT_TYPES.includes("CANCELLED"));
 
   const routesSource = readBackend("src/routes/close.tasks.routes.js");
+  const myTasksRouteIndex = routesSource.indexOf('"/tasks/my"');
+  const summaryRouteIndex = routesSource.indexOf('"/tasks/summary"');
+  const taskIdRouteIndex = routesSource.indexOf('"/tasks/:taskId"');
+  assert(myTasksRouteIndex >= 0 && taskIdRouteIndex >= 0 && myTasksRouteIndex < taskIdRouteIndex);
+  assert(summaryRouteIndex >= 0 && summaryRouteIndex < taskIdRouteIndex);
   assertIncludes(
     routesSource,
     [
+      "requireNumericTaskIdParam",
       '"/tasks/:taskId/start"',
       '"/tasks/:taskId/submit"',
       '"/tasks/:taskId/return"',

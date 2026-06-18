@@ -104,10 +104,16 @@ async function main() {
   assert(!queues.overdueLockRequiredTasks.some((row) => row.id === 5));
 
   const routesSource = readSource("src/routes/close.tasks.routes.js");
+  const myTasksRouteIndex = routesSource.indexOf('"/tasks/my"');
+  const summaryRouteIndex = routesSource.indexOf('"/tasks/summary"');
+  const taskIdRouteIndex = routesSource.indexOf('"/tasks/:taskId"');
+  assert(myTasksRouteIndex >= 0 && taskIdRouteIndex >= 0 && myTasksRouteIndex < taskIdRouteIndex);
+  assert(summaryRouteIndex >= 0 && summaryRouteIndex < taskIdRouteIndex);
   for (const routeContract of [
     '"/tasks/my"',
     '"/tasks/summary"',
     '"/cycles/:cycleId/tasks/summary"',
+    "requireNumericTaskIdParam",
     "listMyCloseTaskQueues(input",
     "buildCloseTaskSummary(input",
   ]) {

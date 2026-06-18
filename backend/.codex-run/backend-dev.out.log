@@ -1,0 +1,12 @@
+
+> backend@1.0.0 dev
+> nodemon src/index.js
+
+[33m[nodemon] 3.1.11[39m
+[33m[nodemon] to restart at any time, enter `rs`[39m
+[33m[nodemon] watching path(s): src\**\* ..\shared\**\*[39m
+[33m[nodemon] watching extensions: js,json[39m
+[32m[nodemon] starting `node src/index.js src/index.js`[39m
+[dotenv@17.3.1] injecting env (17) from .env -- tip: ⚙️  specify custom .env file path with { path: '/custom/path/.env' }
+[dotenv@17.3.1] injecting env (0) from .env -- tip: ⚙️  specify custom .env file path with { path: '/custom/path/.env' }
+{"timestamp":"2026-06-18T07:18:30.939Z","level":"info","service":"saap-api","message":"API server started","port":3000,"baseUrl":"http://localhost:3000"}

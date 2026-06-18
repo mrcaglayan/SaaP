@@ -394,6 +394,12 @@ async function createTenantWithP07Fixtures(stamp) {
     name: "PRP07 User",
     passwordHash,
   });
+  const approverUserId = await createUser({
+    tenantId,
+    email: `prp07_approver_${stamp}@example.com`,
+    name: "PRP07 Approver",
+    passwordHash,
+  });
 
   await query(
     `INSERT INTO bank_accounts (
@@ -441,6 +447,7 @@ async function createTenantWithP07Fixtures(stamp) {
     tenantId,
     legalEntityId,
     userId,
+    approverUserId,
     currencyCode,
     bankAccountId,
     expenseGlAccountId,
@@ -793,7 +800,7 @@ async function main() {
     req: null,
     tenantId: fixture.tenantId,
     batchId: batch1Id,
-    userId: fixture.userId,
+    userId: fixture.approverUserId,
     approveInput: { note: "approve run1 batch for P07 export check" },
     assertScopeAccess: noScopeGuard,
   });
