@@ -45,10 +45,30 @@ function noScopeGuard() {
   return true;
 }
 
+function getRunPeriod(stamp) {
+  const runDate = new Date(stamp);
+  const fiscalYear = runDate.getUTCFullYear();
+  const periodNo = runDate.getUTCMonth() + 1;
+  const periodMonth = String(periodNo).padStart(2, "0");
+  const dateFrom = `${fiscalYear}-${periodMonth}-01`;
+  const dateTo = new Date(Date.UTC(fiscalYear, periodNo, 0)).toISOString().slice(0, 10);
+  const postingDate = runDate.toISOString().slice(0, 10);
+
+  return {
+    fiscalYear,
+    periodNo,
+    periodName: `${fiscalYear}-${periodMonth}`,
+    dateFrom,
+    dateTo,
+    postingDate,
+  };
+}
+
 async function createTenantWithB08BFixtures(stamp) {
   const returnRef = "RETXZA91";
   const diffRef = "DIFQVB72";
   const rejectRef = "REJMWC63";
+  const runPeriod = getRunPeriod(stamp);
 
   const tenantCode = `PRB08B_T_${stamp}`;
   await query(
@@ -145,8 +165,15 @@ async function createTenantWithB08BFixtures(stamp) {
     `INSERT INTO fiscal_periods (
         calendar_id, fiscal_year, period_no, period_name, start_date, end_date, is_adjustment
       )
-      VALUES (?, 2026, 2, '2026-02', '2026-02-01', '2026-02-28', FALSE)`,
-    [calendarId]
+      VALUES (?, ?, ?, ?, ?, ?, FALSE)`,
+    [
+      calendarId,
+      runPeriod.fiscalYear,
+      runPeriod.periodNo,
+      runPeriod.periodName,
+      runPeriod.dateFrom,
+      runPeriod.dateTo,
+    ]
   );
 
   await query(
@@ -271,6 +298,27 @@ async function createTenantWithB08BFixtures(stamp) {
   assert(userId > 0, "Failed to create user fixture");
 
   await query(
+    `INSERT INTO users (tenant_id, email, password_hash, name, status)
+     VALUES (?, ?, ?, ?, 'ACTIVE')`,
+    [
+      tenantId,
+      `prb08b_approver_${stamp}@example.com`,
+      passwordHash,
+      "PRB08B Approver",
+    ]
+  );
+  const approverRows = await query(
+    `SELECT id
+     FROM users
+     WHERE tenant_id = ?
+       AND email = ?
+     LIMIT 1`,
+    [tenantId, `prb08b_approver_${stamp}@example.com`]
+  );
+  const approverUserId = toNumber(approverRows.rows?.[0]?.id);
+  assert(approverUserId > 0, "Failed to create approver user fixture");
+
+  await query(
     `INSERT INTO bank_accounts (
         tenant_id,
         legal_entity_id,
@@ -371,7 +419,7 @@ async function createTenantWithB08BFixtures(stamp) {
     req: null,
     tenantId,
     batchId,
-    userId,
+    userId: approverUserId,
     approveInput: { note: "approve B08B batch" },
     assertScopeAccess: noScopeGuard,
   });
@@ -382,7 +430,7 @@ async function createTenantWithB08BFixtures(stamp) {
     batchId,
     userId,
     postInput: {
-      postingDate: "2026-02-20",
+      postingDate: runPeriod.postingDate,
       note: "post B08B batch",
       externalPaymentRefPrefix: "PRB08B",
     },
@@ -459,12 +507,14 @@ async function createTenantWithB08BFixtures(stamp) {
         recon_status,
         raw_row_json
       )
-      VALUES (?, ?, ?, ?, 1, '2026-02-20', '2026-02-20', ?, ?, 100.000000, ?, 1100.000000, ?, 'UNMATCHED', ?)`,
+      VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, 100.000000, ?, 1100.000000, ?, 'UNMATCHED', ?)`,
     [
       tenantId,
       legalEntityId,
       importId,
       bankAccountId,
+      runPeriod.postingDate,
+      runPeriod.postingDate,
       returnRef,
       returnRef,
       currencyCode,
@@ -490,12 +540,14 @@ async function createTenantWithB08BFixtures(stamp) {
         recon_status,
         raw_row_json
       )
-      VALUES (?, ?, ?, ?, 2, '2026-02-20', '2026-02-20', ?, ?, -95.000000, ?, 1005.000000, ?, 'UNMATCHED', ?)`,
+      VALUES (?, ?, ?, ?, 2, ?, ?, ?, ?, -95.000000, ?, 1005.000000, ?, 'UNMATCHED', ?)`,
     [
       tenantId,
       legalEntityId,
       importId,
       bankAccountId,
+      runPeriod.postingDate,
+      runPeriod.postingDate,
       diffRef,
       diffRef,
       currencyCode,
@@ -532,6 +584,8 @@ async function createTenantWithB08BFixtures(stamp) {
     rejectPaymentLineId: toNumber(rejectPaymentLine?.id),
     returnStatementLineId,
     diffStatementLineId,
+    dateFrom: runPeriod.dateFrom,
+    dateTo: runPeriod.dateTo,
     returnRef,
     diffRef,
     rejectRef,
@@ -680,8 +734,8 @@ async function main() {
     filters: {
       legalEntityId: fixture.legalEntityId,
       bankAccountId: fixture.bankAccountId,
-      dateFrom: "2026-02-01",
-      dateTo: "2026-02-28",
+      dateFrom: fixture.dateFrom,
+      dateTo: fixture.dateTo,
       limit: 100,
       userId: fixture.userId,
     },
@@ -703,8 +757,8 @@ async function main() {
     filters: {
       legalEntityId: fixture.legalEntityId,
       bankAccountId: fixture.bankAccountId,
-      dateFrom: "2026-02-01",
-      dateTo: "2026-02-28",
+      dateFrom: fixture.dateFrom,
+      dateTo: fixture.dateTo,
       limit: 100,
       userId: fixture.userId,
     },
@@ -735,8 +789,8 @@ async function main() {
     filters: {
       legalEntityId: fixture.legalEntityId,
       bankAccountId: fixture.bankAccountId,
-      dateFrom: "2026-02-01",
-      dateTo: "2026-02-28",
+      dateFrom: fixture.dateFrom,
+      dateTo: fixture.dateTo,
       limit: 100,
       userId: fixture.userId,
     },

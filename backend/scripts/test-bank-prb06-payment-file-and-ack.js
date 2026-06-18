@@ -217,6 +217,27 @@ async function createTenantWithPaymentFixtures(stamp) {
   assert(userId > 0, "Failed to create user fixture");
 
   await query(
+    `INSERT INTO users (tenant_id, email, password_hash, name, status)
+     VALUES (?, ?, ?, ?, 'ACTIVE')`,
+    [
+      tenantId,
+      `prb06_approver_${stamp}@example.com`,
+      passwordHash,
+      "PRB06 Approver",
+    ]
+  );
+  const approverRows = await query(
+    `SELECT id
+     FROM users
+     WHERE tenant_id = ?
+       AND email = ?
+     LIMIT 1`,
+    [tenantId, `prb06_approver_${stamp}@example.com`]
+  );
+  const approverUserId = toNumber(approverRows.rows?.[0]?.id);
+  assert(approverUserId > 0, "Failed to create approver user fixture");
+
+  await query(
     `INSERT INTO bank_accounts (
         tenant_id,
         legal_entity_id,
@@ -263,6 +284,7 @@ async function createTenantWithPaymentFixtures(stamp) {
     legalEntityId,
     currencyCode,
     userId,
+    approverUserId,
     bankAccountId,
     payableGlAccountId,
   };
@@ -364,7 +386,7 @@ async function main() {
     req: null,
     tenantId: fixture.tenantId,
     batchId,
-    userId: fixture.userId,
+    userId: fixture.approverUserId,
     approveInput: { note: "approve for bank file export" },
     assertScopeAccess: noScopeGuard,
   });

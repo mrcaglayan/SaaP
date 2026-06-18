@@ -358,6 +358,22 @@ async function createFixture(stamp) {
   const userId = toNumber(userRows.rows?.[0]?.id);
   assert(userId > 0, "Failed to create user fixture");
 
+  await query(
+    `INSERT INTO users (tenant_id, email, password_hash, name, status)
+     VALUES (?, ?, ?, ?, 'ACTIVE')`,
+    [tenantId, `pou07_approver_${stamp}@example.com`, passwordHash, "POU07 Approver"]
+  );
+  const approverRows = await query(
+    `SELECT id
+     FROM users
+     WHERE tenant_id = ?
+       AND email = ?
+     LIMIT 1`,
+    [tenantId, `pou07_approver_${stamp}@example.com`]
+  );
+  const approverUserId = toNumber(approverRows.rows?.[0]?.id);
+  assert(approverUserId > 0, "Failed to create approver user fixture");
+
   async function createBankAccount({
     code,
     name,
@@ -432,6 +448,7 @@ async function createFixture(stamp) {
     legalEntityId,
     operatingUnitId,
     userId,
+    approverUserId,
     currencyCode,
     centralBankAccountId,
     ouBankAccountId,
@@ -661,7 +678,7 @@ async function approveAndPostBatch({ fixture, batchId, postingDate, note, extern
     req: null,
     tenantId: fixture.tenantId,
     batchId,
-    userId: fixture.userId,
+    userId: fixture.approverUserId,
     approveInput: { note: `${note} approve` },
     assertScopeAccess: noScopeGuard,
   });
@@ -882,7 +899,7 @@ async function main() {
     req: null,
     tenantId: fixture.tenantId,
     batchId: driftBatch.batchId,
-    userId: fixture.userId,
+    userId: fixture.approverUserId,
     approveInput: { note: "approve drift batch" },
     assertScopeAccess: noScopeGuard,
   });
