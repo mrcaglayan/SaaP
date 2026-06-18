@@ -31,16 +31,22 @@ function sha256(value) {
   return crypto.createHash("sha256").update(String(value || ""), "utf8").digest("hex");
 }
 
-function buildReq({ tenantWide = false, legalEntityIds = [] } = {}) {
+function buildReq({ tenantId = null, tenantWide = false, legalEntityIds = [] } = {}) {
+  const scopeContext = {
+    tenantId,
+    sourceRows: 1,
+    tenantWide: Boolean(tenantWide),
+    groups: new Set(),
+    countries: new Set(),
+    legalEntities: new Set((legalEntityIds || []).map((id) => toInt(id)).filter(Boolean)),
+    operatingUnits: new Set(),
+  };
+
   return {
     rbac: {
-      scopeContext: {
-        tenantWide: Boolean(tenantWide),
-        groups: new Set(),
-        countries: new Set(),
-        legalEntities: new Set((legalEntityIds || []).map((id) => toInt(id)).filter(Boolean)),
-        operatingUnits: new Set(),
-      },
+      permissionScopeContext: scopeContext,
+      visibilityScopeContext: scopeContext,
+      scopeContext,
     },
   };
 }
@@ -492,9 +498,12 @@ async function main() {
   const stamp = Date.now();
   const fixture = await setupFixture(stamp);
 
-  const reqTenantWideA = buildReq({ tenantWide: true });
-  const reqTenantWideB = buildReq({ tenantWide: true });
-  const reqAOnlyLe1 = buildReq({ legalEntityIds: [fixture.tenantA.legalEntityIds[0]] });
+  const reqTenantWideA = buildReq({ tenantId: fixture.tenantA.tenantId, tenantWide: true });
+  const reqTenantWideB = buildReq({ tenantId: fixture.tenantB.tenantId, tenantWide: true });
+  const reqAOnlyLe1 = buildReq({
+    tenantId: fixture.tenantA.tenantId,
+    legalEntityIds: [fixture.tenantA.legalEntityIds[0]],
+  });
 
   const bankScoped = await listBankAccountRows({
     req: reqAOnlyLe1,

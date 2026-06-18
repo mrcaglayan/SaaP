@@ -44,13 +44,22 @@ function allowAllScopeFilter() {
   return "1 = 1";
 }
 
-function tenantWideReq() {
+function tenantWideReq(tenantId) {
+  const scopeContext = {
+    tenantId,
+    sourceRows: 1,
+    tenantWide: true,
+    groups: new Set(),
+    countries: new Set(),
+    legalEntities: new Set(),
+    operatingUnits: new Set(),
+  };
+
   return {
     rbac: {
-      scopeContext: {
-        tenantWide: true,
-        legalEntities: new Set(),
-      },
+      permissionScopeContext: scopeContext,
+      visibilityScopeContext: scopeContext,
+      scopeContext,
     },
   };
 }
@@ -433,7 +442,7 @@ async function main() {
   assert(toNumber(highPolicy?.id) > 0, "High-threshold policy should be created");
 
   const policiesList = await listApprovalPolicies({
-    req: tenantWideReq(),
+    req: tenantWideReq(fixture.tenantId),
     tenantId: fixture.tenantId,
     filters: {
       tenantId: fixture.tenantId,
@@ -704,7 +713,7 @@ async function main() {
     `SELECT
         SUM(CASE WHEN decision = 'APPROVE' THEN 1 ELSE 0 END) AS approve_count,
         SUM(CASE WHEN decision = 'REJECT' THEN 1 ELSE 0 END) AS reject_count
-     FROM bank_approval_request_decisions
+     FROM approval_decisions
      WHERE tenant_id = ?`,
     [fixture.tenantId]
   );

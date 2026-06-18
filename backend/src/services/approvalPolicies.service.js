@@ -110,6 +110,12 @@ function shouldForceExecuteApprovedRequest(request) {
   return false;
 }
 
+function conflict(message) {
+  const err = new Error(message);
+  err.status = 409;
+  return err;
+}
+
 async function syncUnifiedApprovalBridge({ tenantId, request }) {
   const requestId = parsePositiveInt(
     getUnifiedRequestField(request, "id", "requestId", "request_id"),
@@ -227,7 +233,10 @@ function mapGenericApprovalRequestRow(row) {
     scope_id: parsePositiveInt(row.scope_id),
     legal_entity_id: parsePositiveInt(row.legal_entity_id),
     operating_unit_id: parsePositiveInt(row.operating_unit_id),
-    request_status: normalizeModuleCode(row.request_status, ""),
+    request_status: normalizeGenericRequestStatusForCompatibility(
+      row.request_status,
+      row.execution_status,
+    ),
     current_step_no: Number(row.current_step_no || 1),
     execution_status: normalizeModuleCode(
       row.execution_status || "NOT_EXECUTED",
@@ -534,6 +543,211 @@ export function snapshotApprovalPolicy(policy) {
   return snapshotBankApprovalPolicy(policy);
 }
 
+function addGenericPolicyCompatibilityAliases(policy) {
+  if (!policy) {
+    return null;
+  }
+  return {
+    ...policy,
+    tenant_id: parsePositiveInt(policy.tenantId),
+    module_code: normalizeModuleCode(policy.moduleCode),
+    policy_code: policy.policyCode || null,
+    policy_name: policy.policyName || null,
+    target_type: normalizeModuleCode(policy.targetType, ""),
+    action_type: normalizeModuleCode(policy.actionType, ""),
+    version_no: Number(policy.versionNo || 1),
+    scope_type: normalizeModuleCode(policy.scopeType, "") || null,
+    scope_id: parsePositiveInt(policy.scopeId),
+    effective_from: policy.effectiveFrom || null,
+    effective_to: policy.effectiveTo || null,
+    step_count: Number(policy.stepCount || 1),
+    min_approvals: Number(policy.minApprovals || 1),
+    required_approvals: Number(policy.minApprovals || 1),
+    maker_checker_required: Boolean(policy.makerCheckerRequired),
+    allow_self_approve: Boolean(policy.allowSelfApprove),
+    auto_execute_on_final_approval: Boolean(policy.autoExecuteOnFinalApproval),
+    escalation_after_hours: parsePositiveInt(policy.escalationAfterHours),
+    min_amount: toAmount(policy.minAmount),
+    max_amount: toAmount(policy.maxAmount),
+    currency_code: normalizeModuleCode(policy.currencyCode, "") || null,
+    approver_permission_code:
+      String(policy.approverPermissionCode || "").trim() || null,
+    is_active: Boolean(policy.isActive),
+    created_by_user_id: parsePositiveInt(policy.createdByUserId),
+    updated_by_user_id: parsePositiveInt(policy.updatedByUserId),
+    created_at: policy.createdAt || null,
+    updated_at: policy.updatedAt || null,
+  };
+}
+
+function normalizeGenericRequestStatusForCompatibility(status, executionStatus = null) {
+  const normalized = normalizeModuleCode(status, "");
+  if (normalizeModuleCode(executionStatus, "") === "EXECUTED") {
+    return "EXECUTED";
+  }
+  if (normalized === "PENDING_REVIEW" || normalized === "ESCALATED") {
+    return "PENDING";
+  }
+  if (normalized === "APPROVED") {
+    return "APPROVED";
+  }
+  return normalized;
+}
+
+function countGenericDecisions(request, decisionType) {
+  const normalizedDecisionType = normalizeModuleCode(decisionType, "");
+  return Array.isArray(request?.decisions)
+    ? request.decisions.filter(
+        (decision) =>
+          normalizeModuleCode(
+            getUnifiedRequestField(decision, "decision"),
+            "",
+          ) === normalizedDecisionType,
+      ).length
+    : 0;
+}
+
+function getGenericRequestPolicySnapshot(request) {
+  return (
+    request?.policySnapshot ||
+    request?.policy_snapshot_json ||
+    request?.policy_snapshot ||
+    {}
+  );
+}
+
+function getGenericRequestTargetSnapshot(request) {
+  return (
+    request?.targetSnapshot ||
+    request?.target_snapshot_json ||
+    request?.target_snapshot ||
+    null
+  );
+}
+
+function addGenericRequestCompatibilityAliases(request) {
+  if (!request) {
+    return null;
+  }
+  const policySnapshot = getGenericRequestPolicySnapshot(request);
+  const targetSnapshot = getGenericRequestTargetSnapshot(request);
+  const executionStatus = normalizeModuleCode(
+    getUnifiedRequestField(request, "executionStatus", "execution_status") ||
+      "NOT_EXECUTED",
+    "",
+  );
+  const requiredApprovals = Math.max(
+    1,
+    Number(
+      policySnapshot?.min_approvals ||
+        policySnapshot?.required_approvals ||
+        policySnapshot?.steps?.[0]?.min_approvals ||
+        1,
+    ),
+  );
+  return {
+    ...request,
+    tenant_id: parsePositiveInt(
+      getUnifiedRequestField(request, "tenantId", "tenant_id"),
+    ),
+    request_code: getUnifiedRequestField(request, "requestCode", "request_code") || null,
+    idempotency_key:
+      getUnifiedRequestField(request, "idempotencyKey", "idempotency_key") || null,
+    policy_id: parsePositiveInt(
+      getUnifiedRequestField(request, "policyId", "policy_id"),
+    ),
+    policy_version_no: Number(
+      getUnifiedRequestField(request, "policyVersionNo", "policy_version_no") ||
+        1,
+    ),
+    module_code: normalizeModuleCode(
+      getUnifiedRequestField(request, "moduleCode", "module_code"),
+    ),
+    target_type: normalizeModuleCode(
+      getUnifiedRequestField(request, "targetType", "target_type"),
+      "",
+    ),
+    target_id: parsePositiveInt(
+      getUnifiedRequestField(request, "targetId", "target_id"),
+    ),
+    scope_type: normalizeModuleCode(
+      getUnifiedRequestField(request, "scopeType", "scope_type"),
+      "",
+    ),
+    scope_id: parsePositiveInt(
+      getUnifiedRequestField(request, "scopeId", "scope_id"),
+    ),
+    legal_entity_id: parsePositiveInt(
+      getUnifiedRequestField(request, "legalEntityId", "legal_entity_id"),
+    ),
+    operating_unit_id: parsePositiveInt(
+      getUnifiedRequestField(request, "operatingUnitId", "operating_unit_id"),
+    ),
+    request_status: normalizeGenericRequestStatusForCompatibility(
+      getUnifiedRequestField(request, "requestStatus", "request_status"),
+      executionStatus,
+    ),
+    current_step_no: Number(
+      getUnifiedRequestField(request, "currentStepNo", "current_step_no") || 1,
+    ),
+    execution_status: executionStatus,
+    submitted_by_user_id: parsePositiveInt(
+      getUnifiedRequestField(
+        request,
+        "submittedByUserId",
+        "submitted_by_user_id",
+      ),
+    ),
+    submitted_at:
+      getUnifiedRequestField(request, "submittedAt", "submitted_at") || null,
+    approved_at:
+      getUnifiedRequestField(request, "approvedAt", "approved_at") || null,
+    rejected_at:
+      getUnifiedRequestField(request, "rejectedAt", "rejected_at") || null,
+    withdrawn_at:
+      getUnifiedRequestField(request, "withdrawnAt", "withdrawn_at") || null,
+    executed_at:
+      getUnifiedRequestField(request, "executedAt", "executed_at") || null,
+    executed_by_user_id: parsePositiveInt(
+      getUnifiedRequestField(request, "executedByUserId", "executed_by_user_id"),
+    ),
+    last_activity_at:
+      getUnifiedRequestField(request, "lastActivityAt", "last_activity_at") ||
+      null,
+    policy_snapshot_json: policySnapshot,
+    target_snapshot_json: targetSnapshot,
+    routing_summary:
+      request?.routing_summary ||
+      request?.routingSummary ||
+      getApprovalRequestRoutingSummary({ policySnapshot, targetSnapshot }),
+    action_payload_json:
+      getUnifiedRequestField(request, "actionPayload", "action_payload_json") ||
+      null,
+    execution_result_json:
+      getUnifiedRequestField(
+        request,
+        "executionResult",
+        "execution_result_json",
+      ) || null,
+    execution_error_text:
+      getUnifiedRequestField(
+        request,
+        "executionErrorText",
+        "execution_error_text",
+      ) || null,
+    required_approvals: requiredApprovals,
+    min_approvals: requiredApprovals,
+    approvals_granted:
+      request.approvals_granted !== undefined
+        ? Number(request.approvals_granted || 0)
+        : countGenericDecisions(request, "APPROVE"),
+    rejections_granted:
+      request.rejections_granted !== undefined
+        ? Number(request.rejections_granted || 0)
+        : countGenericDecisions(request, "REJECT"),
+  };
+}
+
 /**
  * Evaluate whether an approval is required for one target/action submission.
  */
@@ -565,7 +779,7 @@ export async function evaluateApprovalNeed({
     });
   }
 
-  return evaluateGenericApprovalNeed(
+  const result = await evaluateGenericApprovalNeed(
     normalizedModuleCode,
     targetType,
     actionType,
@@ -577,6 +791,10 @@ export async function evaluateApprovalNeed({
       effectiveOn: asOfDate,
     },
   );
+  return {
+    ...result,
+    policy: addGenericPolicyCompatibilityAliases(result?.policy),
+  };
 }
 
 /**
@@ -662,7 +880,7 @@ export async function submitApprovalRequest({
   return {
     approval_required: true,
     approvalRequired: true,
-    item: submitRes?.item || null,
+    item: addGenericRequestCompatibilityAliases(submitRes?.item),
     idempotent: Boolean(submitRes?.idempotent),
   };
 }
@@ -841,6 +1059,14 @@ export async function approveApprovalRequest({
       assertScopeAccess,
     });
   }
+  if (
+    normalizeModuleCode(
+      getUnifiedRequestField(genericRequest, "requestStatus", "request_status"),
+      "",
+    ) === "REJECTED"
+  ) {
+    throw conflict("Rejected approval request cannot be approved");
+  }
 
   ensureUnifiedApprovalExecutionResolversRegistered();
   assertGenericRequestScopeAccess(
@@ -885,7 +1111,10 @@ export async function approveApprovalRequest({
     };
   }
   await syncUnifiedApprovalBridge({ tenantId, request: approvalItem });
-  return result;
+  return {
+    ...result,
+    item: addGenericRequestCompatibilityAliases(result.item || approvalItem),
+  };
 }
 
 /**
@@ -932,7 +1161,10 @@ export async function rejectApprovalRequest({
     tenantId,
     request: result.item || genericRequest,
   });
-  return result;
+  return {
+    ...result,
+    item: addGenericRequestCompatibilityAliases(result.item || genericRequest),
+  };
 }
 
 /**
@@ -954,7 +1186,10 @@ export async function executeApprovalRequest({ tenantId, requestId, userId }) {
     tenantId,
     request: result.item || genericRequest,
   });
-  return result;
+  return {
+    ...result,
+    item: addGenericRequestCompatibilityAliases(result.item || genericRequest),
+  };
 }
 
 export default {
