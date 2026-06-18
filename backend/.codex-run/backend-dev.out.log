@@ -10,3 +10,14 @@
 [dotenv@17.3.1] injecting env (17) from .env -- tip: ⚙️  specify custom .env file path with { path: '/custom/path/.env' }
 [dotenv@17.3.1] injecting env (0) from .env -- tip: ⚙️  specify custom .env file path with { path: '/custom/path/.env' }
 {"timestamp":"2026-06-18T07:18:30.939Z","level":"info","service":"saap-api","message":"API server started","port":3000,"baseUrl":"http://localhost:3000"}
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/index.js src/index.js`[39m
+[dotenv@17.3.1] injecting env (17) from .env -- tip: ⚙️  load multiple .env files with { path: ['.env.local', '.env'] }
+[dotenv@17.3.1] injecting env (0) from .env -- tip: ⚙️  load multiple .env files with { path: ['.env.local', '.env'] }
+{"timestamp":"2026-06-18T07:25:19.055Z","level":"info","service":"saap-api","message":"API server started","port":3000,"baseUrl":"http://localhost:3000"}
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/index.js src/index.js`[39m
+[dotenv@17.3.1] injecting env (17) from .env -- tip: ⚙️  load multiple .env files with { path: ['.env.local', '.env'] }
+[dotenv@17.3.1] injecting env (0) from .env -- tip: ⚙️  enable debug logging with { debug: true }
+{"timestamp":"2026-06-18T07:29:35.211Z","level":"info","service":"saap-api","message":"API server started","port":3000,"baseUrl":"http://localhost:3000"}
+[32m[nodemon] clean exit - waiting for changes before restart[39m

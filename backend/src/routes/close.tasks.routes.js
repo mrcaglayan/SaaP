@@ -64,41 +64,8 @@ import {
 
 const router = express.Router();
 
-function isPositiveIntegerText(value) {
-  return /^[1-9]\d*$/.test(String(value || "").trim());
-}
-
-function requireNumericTaskIdParam(req, res, next) {
-  if (!isPositiveIntegerText(req.params?.taskId)) {
-    return next("route");
-  }
-  return next();
-}
-
-function requireNumericEvidenceIdParam(req, res, next) {
-  if (!isPositiveIntegerText(req.params?.evidenceId)) {
-    return next("route");
-  }
-  return next();
-}
-
-function requireNumericCommentIdParam(req, res, next) {
-  if (!isPositiveIntegerText(req.params?.commentId)) {
-    return next("route");
-  }
-  return next();
-}
-
-const readTaskScope = async (req, tenantId) => {
-  const taskId = req.params?.taskId;
-  if (!isPositiveIntegerText(taskId)) {
-    const err = new Error("taskId must be a positive integer");
-    err.status = 400;
-    err.code = "INVALID_TASK_ID";
-    throw err;
-  }
-  return resolveCloseTaskRouteScope(taskId, tenantId);
-};
+const readTaskScope = async (req, tenantId) =>
+  resolveCloseTaskRouteScope(req.params?.taskId, tenantId);
 
 const readCycleScope = async (req, tenantId) =>
   resolveCloseCycleTaskRouteScope(req.params?.cycleId ?? req.params?.id, tenantId);
@@ -258,7 +225,6 @@ router.post(
 
 router.get(
   "/tasks/:taskId",
-  requireNumericTaskIdParam,
   requirePermission("close.task.read", { resolveScope: readTaskScope }),
   asyncHandler(async (req, res) => {
     const tenantId = parsePositiveInt(req.user?.tenantId);
@@ -273,7 +239,6 @@ router.get(
 
 router.patch(
   "/tasks/:taskId",
-  requireNumericTaskIdParam,
   requireAnyPermission(["close.task.assign", "close.task.admin"], { resolveScope: readTaskScope }),
   asyncHandler(async (req, res) => {
     const input = parseCloseTaskPatchInput(req);
@@ -284,7 +249,6 @@ router.patch(
 
 router.post(
   "/tasks/:taskId/start",
-  requireNumericTaskIdParam,
   requireAnyPermission(["close.task.work", "close.task.admin"], { resolveScope: readTaskScope }),
   asyncHandler(async (req, res) => {
     const input = parseCloseTaskActionInput(req);
@@ -295,7 +259,6 @@ router.post(
 
 router.post(
   "/tasks/:taskId/submit",
-  requireNumericTaskIdParam,
   requireAnyPermission(["close.task.work", "close.task.admin"], { resolveScope: readTaskScope }),
   asyncHandler(async (req, res) => {
     const input = parseCloseTaskActionInput(req);
@@ -306,7 +269,6 @@ router.post(
 
 router.post(
   "/tasks/:taskId/return",
-  requireNumericTaskIdParam,
   requireAnyPermission(["close.task.review", "close.task.admin"], { resolveScope: readTaskScope }),
   asyncHandler(async (req, res) => {
     const input = parseCloseTaskActionInput(req, { requireReason: true });
@@ -317,7 +279,6 @@ router.post(
 
 router.post(
   "/tasks/:taskId/approve",
-  requireNumericTaskIdParam,
   requireAnyPermission(["close.task.review", "close.task.admin"], { resolveScope: readTaskScope }),
   asyncHandler(async (req, res) => {
     const input = parseCloseTaskActionInput(req);
@@ -328,7 +289,6 @@ router.post(
 
 router.post(
   "/tasks/:taskId/waive",
-  requireNumericTaskIdParam,
   requirePermission("close.task.waive", { resolveScope: readTaskScope }),
   asyncHandler(async (req, res) => {
     const input = parseCloseTaskActionInput(req, { requireReason: true });
@@ -339,7 +299,6 @@ router.post(
 
 router.post(
   "/tasks/:taskId/cancel",
-  requireNumericTaskIdParam,
   requireAnyPermission(["close.task.work", "close.task.admin"], { resolveScope: readTaskScope }),
   asyncHandler(async (req, res) => {
     const input = parseCloseTaskActionInput(req, { requireReason: true });
@@ -350,7 +309,6 @@ router.post(
 
 router.post(
   "/tasks/:taskId/reopen",
-  requireNumericTaskIdParam,
   requirePermission("close.task.admin", { resolveScope: readTaskScope }),
   asyncHandler(async (req, res) => {
     const input = parseCloseTaskActionInput(req);
@@ -361,7 +319,6 @@ router.post(
 
 router.post(
   "/tasks/:taskId/refresh-source-check",
-  requireNumericTaskIdParam,
   requireAnyPermission(["close.task.work", "close.task.admin"], { resolveScope: readTaskScope }),
   asyncHandler(async (req, res) => {
     const input = parseCloseTaskActionInput(req);
@@ -372,7 +329,6 @@ router.post(
 
 router.get(
   "/tasks/:taskId/events",
-  requireNumericTaskIdParam,
   requirePermission("close.task.read", { resolveScope: readTaskScope }),
   asyncHandler(async (req, res) => {
     const tenantId = parsePositiveInt(req.user?.tenantId);
@@ -384,7 +340,6 @@ router.get(
 
 router.get(
   "/tasks/:taskId/evidence",
-  requireNumericTaskIdParam,
   requirePermission("close.task.read", { resolveScope: readTaskScope }),
   asyncHandler(async (req, res) => {
     const input = parseCloseTaskActionInput(req);
@@ -395,7 +350,6 @@ router.get(
 
 router.post(
   "/tasks/:taskId/evidence/drafts",
-  requireNumericTaskIdParam,
   requireAnyPermission(["close.task.work", "close.task.admin"], { resolveScope: readTaskScope }),
   asyncHandler(async (req, res) => {
     const input = parseCloseTaskEvidenceDraftInput(req);
@@ -406,7 +360,6 @@ router.post(
 
 router.post(
   "/tasks/:taskId/evidence",
-  requireNumericTaskIdParam,
   requireAnyPermission(["close.task.work", "close.task.admin"], { resolveScope: readTaskScope }),
   asyncHandler(async (req, res) => {
     const input = parseCloseTaskEvidenceAttachInput(req);
@@ -417,8 +370,6 @@ router.post(
 
 router.put(
   "/tasks/:taskId/evidence/:evidenceId/content",
-  requireNumericTaskIdParam,
-  requireNumericEvidenceIdParam,
   requireAnyPermission(["close.task.work", "close.task.admin"], { resolveScope: readTaskScope }),
   evidenceBinaryUploadMiddleware,
   asyncHandler(async (req, res) => {
@@ -440,8 +391,6 @@ router.put(
 
 router.get(
   "/tasks/:taskId/evidence/:evidenceId/download",
-  requireNumericTaskIdParam,
-  requireNumericEvidenceIdParam,
   requirePermission("close.task.read", { resolveScope: readTaskScope }),
   asyncHandler(async (req, res) => {
     const input = parseCloseTaskEvidenceMutationInput(req);
@@ -463,8 +412,6 @@ router.get(
 
 router.delete(
   "/tasks/:taskId/evidence/:evidenceId",
-  requireNumericTaskIdParam,
-  requireNumericEvidenceIdParam,
   requireAnyPermission(["close.task.work", "close.task.admin"], { resolveScope: readTaskScope }),
   asyncHandler(async (req, res) => {
     const input = parseCloseTaskEvidenceMutationInput(req);
@@ -475,7 +422,6 @@ router.delete(
 
 router.get(
   "/tasks/:taskId/comments",
-  requireNumericTaskIdParam,
   requirePermission("close.task.read", { resolveScope: readTaskScope }),
   asyncHandler(async (req, res) => {
     const input = parseCloseTaskActionInput(req);
@@ -486,7 +432,6 @@ router.get(
 
 router.post(
   "/tasks/:taskId/comments",
-  requireNumericTaskIdParam,
   requireAnyPermission(["close.task.work", "close.task.admin"], { resolveScope: readTaskScope }),
   asyncHandler(async (req, res) => {
     const input = parseCloseTaskCommentCreateInput(req);
@@ -497,8 +442,6 @@ router.post(
 
 router.delete(
   "/tasks/:taskId/comments/:commentId",
-  requireNumericTaskIdParam,
-  requireNumericCommentIdParam,
   requireAnyPermission(["close.task.work", "close.task.admin"], { resolveScope: readTaskScope }),
   asyncHandler(async (req, res) => {
     const input = parseCloseTaskCommentDeleteInput(req);

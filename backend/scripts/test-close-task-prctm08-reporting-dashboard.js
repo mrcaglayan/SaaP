@@ -113,7 +113,6 @@ async function main() {
     '"/tasks/my"',
     '"/tasks/summary"',
     '"/cycles/:cycleId/tasks/summary"',
-    "requireNumericTaskIdParam",
     "listMyCloseTaskQueues(input",
     "buildCloseTaskSummary(input",
   ]) {

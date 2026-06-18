@@ -318,7 +318,6 @@ function assertLifecycleContracts() {
   assertIncludes(
     routesSource,
     [
-      "requireNumericTaskIdParam",
       '"/tasks/:taskId/start"',
       '"/tasks/:taskId/submit"',
       '"/tasks/:taskId/return"',
