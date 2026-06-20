@@ -1768,9 +1768,9 @@ async function upsertCountries() {
   }
 }
 
-async function upsertPermissions() {
+async function upsertPermissions(runQuery = query) {
   for (const [code, description] of PERMISSIONS) {
-    await query(
+    await runQuery(
       `INSERT INTO permissions (code, description)
        VALUES (?, ?)
        ON DUPLICATE KEY UPDATE
@@ -1795,8 +1795,8 @@ async function getTenantIds() {
   return tenantRows.rows;
 }
 
-async function getPermissionIdMap() {
-  const { rows } = await query("SELECT id, code FROM permissions");
+async function getPermissionIdMap(runQuery = query) {
+  const { rows } = await runQuery("SELECT id, code FROM permissions");
   const map = new Map();
   for (const row of rows) {
     map.set(row.code, row.id);
@@ -1804,8 +1804,8 @@ async function getPermissionIdMap() {
   return map;
 }
 
-async function getRoleIdsByTenant(tenantId) {
-  const { rows } = await query(
+async function getRoleIdsByTenant(tenantId, runQuery = query) {
+  const { rows } = await runQuery(
     "SELECT id, code FROM roles WHERE tenant_id = ?",
     [tenantId],
   );
@@ -1816,9 +1816,9 @@ async function getRoleIdsByTenant(tenantId) {
   return map;
 }
 
-async function upsertRolesForTenant(tenantId, roleDefinitions) {
+async function upsertRolesForTenant(tenantId, roleDefinitions, runQuery = query) {
   for (const role of roleDefinitions) {
-    await query(
+    await runQuery(
       `INSERT INTO roles (tenant_id, code, name, is_system)
        VALUES (?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
@@ -1834,14 +1834,14 @@ async function upsertRolesForTenant(tenantId, roleDefinitions) {
   }
 }
 
-async function upsertFieldVisibilityPoliciesForTenant(tenantId) {
+async function upsertFieldVisibilityPoliciesForTenant(tenantId, runQuery = query) {
   for (const policy of DEFAULT_FIELD_VISIBILITY_POLICY_DEFINITIONS) {
     const scopeType = String(policy.appliesToScopeType || "").trim() || null;
     const scopeId =
       scopeType === "TENANT"
         ? tenantId
         : parsePositiveInt(policy.appliesToScopeId);
-    await query(
+    await runQuery(
       `INSERT INTO field_visibility_policies (
           tenant_id,
           module_code,
@@ -1878,8 +1878,9 @@ async function assignRolePermissionsForTenant(
   tenantId,
   permissionIdByCode,
   roleDefinitions,
+  runQuery = query,
 ) {
-  const roleIdsByCode = await getRoleIdsByTenant(tenantId);
+  const roleIdsByCode = await getRoleIdsByTenant(tenantId, runQuery);
 
   for (const role of roleDefinitions) {
     const roleId = roleIdsByCode.get(role.code);
@@ -1895,7 +1896,7 @@ async function assignRolePermissionsForTenant(
         );
       }
 
-      await query(
+      await runQuery(
         `INSERT IGNORE INTO role_permissions (role_id, permission_id)
          VALUES (?, ?)`,
         [roleId, permissionId],
@@ -1909,17 +1910,60 @@ async function assignRolePermissionsForTenant(
     // Seeded system roles are authoritative here so transitional SoD cleanup
     // removes stale checker/posting powers during reseed as well as fresh seed.
     if (desiredPermissionIds.length === 0) {
-      await query("DELETE FROM role_permissions WHERE role_id = ?", [roleId]);
+      await runQuery("DELETE FROM role_permissions WHERE role_id = ?", [roleId]);
       continue;
     }
 
-    await query(
+    await runQuery(
       `DELETE FROM role_permissions
        WHERE role_id = ?
          AND permission_id NOT IN (${desiredPermissionIds.map(() => "?").join(", ")})`,
       [roleId, ...desiredPermissionIds],
     );
   }
+}
+
+/**
+ * Seeds the authoritative runtime role catalog for one existing tenant.
+ *
+ * Tenant provisioning uses this instead of `seedCore()` so a new production
+ * tenant receives all shipped role presets without creating demo users or
+ * touching unrelated tenants.
+ */
+export async function seedTenantRoleCatalog(tenantId, options = {}) {
+  const normalizedTenantId = parsePositiveInt(tenantId);
+  if (!normalizedTenantId) {
+    throw new Error("tenantId is required to seed the tenant role catalog");
+  }
+
+  const runQuery = typeof options.runQuery === "function" ? options.runQuery : query;
+  await upsertPermissions(runQuery);
+  const permissionIdByCode =
+    options.permissionIdByCode instanceof Map
+      ? options.permissionIdByCode
+      : await getPermissionIdMap(runQuery);
+
+  if (permissionIdByCode.size === 0) {
+    throw new Error(
+      "Permissions catalog is empty. Run core seed before tenant role catalog initialization.",
+    );
+  }
+
+  await upsertRolesForTenant(normalizedTenantId, ALL_ROLE_DEFINITIONS, runQuery);
+  await assignRolePermissionsForTenant(
+    normalizedTenantId,
+    permissionIdByCode,
+    ALL_ROLE_DEFINITIONS,
+    runQuery,
+  );
+  await upsertFieldVisibilityPoliciesForTenant(normalizedTenantId, runQuery);
+
+  return {
+    tenantId: normalizedTenantId,
+    roleCount: ALL_ROLE_DEFINITIONS.length,
+    fieldVisibilityPolicyCount: DEFAULT_FIELD_VISIBILITY_POLICY_DEFINITIONS.length,
+    roleIdsByCode: await getRoleIdsByTenant(normalizedTenantId, runQuery),
+  };
 }
 
 /**
@@ -1947,21 +1991,10 @@ export async function seedCore(options = {}) {
     await ensureDefaultTenant(defaultTenantCode, defaultTenantName);
   }
 
-  const tenants = await getTenantIds();
-  const roleDefinitionsByTenantId = new Map();
-  for (const tenant of tenants) {
-    roleDefinitionsByTenantId.set(tenant.id, ALL_ROLE_DEFINITIONS);
-    await upsertRolesForTenant(tenant.id, ALL_ROLE_DEFINITIONS);
-  }
-
   const permissionIdByCode = await getPermissionIdMap();
+  const tenants = await getTenantIds();
   for (const tenant of tenants) {
-    await assignRolePermissionsForTenant(
-      tenant.id,
-      permissionIdByCode,
-      roleDefinitionsByTenantId.get(tenant.id) || ALL_ROLE_DEFINITIONS,
-    );
-    await upsertFieldVisibilityPoliciesForTenant(tenant.id);
+    await seedTenantRoleCatalog(tenant.id, { permissionIdByCode });
   }
 
   return {

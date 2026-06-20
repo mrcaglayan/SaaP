@@ -25,6 +25,7 @@ import { getTenantReadinessSnapshot } from "../services/tenant-readiness.service
 import { getTenantRoleIdsByCode } from "../services/systemRoles.service.js";
 import { createInviteForTenantUser } from "../services/userInvites.service.js";
 import { logRbacAuditEvent } from "../audit/rbacAuditLogger.js";
+import { seedTenantRoleCatalog } from "../seedCore.js";
 
 const router = express.Router();
 const SHAREHOLDER_CAPITAL_CREDIT_PARENT_PURPOSE =
@@ -2257,6 +2258,8 @@ router.post(
     }
 
     const bootstrapResult = await withTransaction(async (tx) => {
+      await seedTenantRoleCatalog(tenantId, { runQuery: tx.query });
+
       await tx.query(
         `INSERT INTO group_companies (tenant_id, code, name)
          VALUES (?, ?, ?)

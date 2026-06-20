@@ -4,9 +4,9 @@ import jwt from "jsonwebtoken";
 import { query, withTransaction } from "../db.js";
 import { invalidateRbacCache } from "../middleware/rbac.js";
 import { normalizeFeatureCode } from "../services/features.catalog.js";
+import { seedTenantRoleCatalog } from "../seedCore.js";
 import {
   assignBootstrapRolesToUser,
-  ensureSystemRolesForTenant,
   SECURITY_ADMIN_ROLE_CODE,
   SYSTEM_ADMIN_ROLE_CODE,
 } from "../services/systemRoles.service.js";
@@ -335,9 +335,10 @@ async function getProviderTenantRow(tenantId) {
 
 async function ensureBootstrapRoles(tx, tenantId) {
   try {
-    return await ensureSystemRolesForTenant(tenantId, {
+    const catalog = await seedTenantRoleCatalog(tenantId, {
       runQuery: (sql, params) => tx.query(sql, params),
     });
+    return catalog.roleIdsByCode;
   } catch (error) {
     if (
       String(error?.message || "").includes("Permissions catalog is empty")
@@ -779,9 +780,7 @@ router.post(
       // One-click provider recovery restores bootstrap roles to the tenant's
       // earliest viable user so the control plane can repair lockouts without
       // opening a broader user-management workflow here.
-      const roleIdsByCode = await ensureSystemRolesForTenant(tenantId, {
-        runQuery,
-      });
+      const roleIdsByCode = await ensureBootstrapRoles(tx, tenantId);
       await assignBootstrapRolesToUser(tenantId, targetUser.id, {
         runQuery,
         roleIdsByCode,

@@ -27,6 +27,7 @@
     "jobs:retention:scheduler": "node scripts/run-retention-scheduler.js",
     "job:approval:escalation:schedule-due": "node scripts/approval-escalation-schedule-due.js",
     "jobs:approval:escalation:scheduler": "node scripts/run-approval-escalation-scheduler.js",
+    "test:provider:tenant-role-catalog": "node scripts/test-provider-tenant-role-catalog.js",
     "test:permission-matrix": "node scripts/test-permission-matrix.js",
     "test:close-tasks:schema": "node scripts/test-close-task-schema.js",
     "test:close-tasks:scope": "node scripts/test-close-task-scope-access.js",
