@@ -3606,6 +3606,7 @@
         ],
         "operationId": "createConsolidationRun",
         "summary": "Start consolidation run",
+        "description": "Creates a consolidation run. Replaying the same OFFICIAL group/period/runName returns the existing run with idempotent=true.",
         "requestBody": {
           "required": true,
           "content": {
@@ -3617,6 +3618,16 @@
           }
         },
         "responses": {
+          "200": {
+            "description": "Existing OFFICIAL consolidation run returned from idempotent replay",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsolidationRunResponse"
+                }
+              }
+            }
+          },
           "201": {
             "description": "Consolidation run created",
             "content": {
@@ -13415,14 +13426,14 @@
           "Close"
         ],
         "operationId": "getApiV1CloseCyclesIdCockpit",
-        "summary": "Auto-generated: GET /api/v1/close/cycles/{id}/cockpit",
+        "summary": "Read close-cycle cockpit",
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Close-cycle cockpit",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/CloseCycleCockpitResponse"
                 }
               }
             }
@@ -13448,7 +13459,8 @@
               "minimum": 1
             }
           }
-        ]
+        ],
+        "description": "Returns the close cockpit payload, including consolidationReadiness for consolidation-group cycles. Entity cycles return consolidationReadiness.applicable=false."
       }
     },
     "/api/v1/close/cycles/{id}/lock": {
@@ -41854,6 +41866,14 @@
             "type": "string",
             "minLength": 1
           },
+          "scenarioCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "versionNo": {
+            "type": "integer",
+            "minimum": 1
+          },
           "presentationCurrencyCode": {
             "type": "string",
             "minLength": 3,
@@ -41863,8 +41883,7 @@
         "required": [
           "consolidationGroupId",
           "fiscalPeriodId",
-          "runName",
-          "presentationCurrencyCode"
+          "runName"
         ]
       },
       "ConsolidationRunResponse": {
@@ -41873,13 +41892,34 @@
           "ok": {
             "type": "boolean"
           },
+          "tenantId": {
+            "type": "integer",
+            "nullable": true
+          },
           "runId": {
             "type": "integer",
+            "nullable": true
+          },
+          "idempotent": {
+            "type": "boolean"
+          },
+          "scenarioCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "versionNo": {
+            "type": "integer",
+            "nullable": true
+          },
+          "presentationCurrencyCode": {
+            "type": "string",
             "nullable": true
           }
         },
         "required": [
-          "ok"
+          "ok",
+          "runId",
+          "idempotent"
         ]
       },
       "ConsolidationRunExecuteInput": {
@@ -49365,6 +49405,287 @@
         "required": [
           "voucherId",
           "status"
+        ]
+      },
+      "ConsolidationReadinessStatus": {
+        "type": "string",
+        "enum": [
+          "WAITING_FOR_ENTITY_CLOSE",
+          "READY_TO_START",
+          "IN_PROGRESS",
+          "READY_TO_FINALIZE",
+          "LOCKED"
+        ]
+      },
+      "ConsolidationReadinessBlockingReason": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0,
+            "nullable": true
+          },
+          "itemIds": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ]
+      },
+      "ConsolidationReadinessNextAction": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "requiredPermissionCode": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "code",
+          "label"
+        ]
+      },
+      "ConsolidationReadinessSource": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "memberReadinessBlockCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "dependencyBlockerCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "draftAdjustmentCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "draftEliminationCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "entryCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "workflowGateRequired": {
+            "type": "boolean"
+          },
+          "workflowGateApproved": {
+            "type": "boolean"
+          },
+          "workflowBlockerCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "nonWorkflowBlockerCount": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "ConsolidationReadiness": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "applicable": {
+            "type": "boolean"
+          },
+          "closeCycleId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "closeCycleItemId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "consolidationGroupId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "groupCompanyId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "fiscalPeriodId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "runId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "runName": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ConsolidationReadinessStatus"
+              }
+            ],
+            "nullable": true
+          },
+          "canStart": {
+            "type": "boolean"
+          },
+          "canOpenRun": {
+            "type": "boolean"
+          },
+          "canFinalize": {
+            "type": "boolean"
+          },
+          "userCanStart": {
+            "type": "boolean"
+          },
+          "userCanOpen": {
+            "type": "boolean"
+          },
+          "userCanFinalize": {
+            "type": "boolean"
+          },
+          "operationalReadyToFinalize": {
+            "type": "boolean"
+          },
+          "workflowApproved": {
+            "type": "boolean"
+          },
+          "ownerUserId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "ownerRoleHint": {
+            "type": "string",
+            "nullable": true
+          },
+          "ownerResolutionSource": {
+            "type": "string",
+            "enum": [
+              "ROLE",
+              "PERMISSION",
+              "ADMIN",
+              "NONE"
+            ],
+            "nullable": true
+          },
+          "blockingReasons": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConsolidationReadinessBlockingReason"
+            }
+          },
+          "nextAction": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ConsolidationReadinessNextAction"
+              }
+            ],
+            "nullable": true
+          },
+          "source": {
+            "$ref": "#/components/schemas/ConsolidationReadinessSource"
+          },
+          "reasonCode": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "applicable",
+          "closeCycleId"
+        ]
+      },
+      "CloseCycleCockpitResponse": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "cycleId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "row": {
+            "$ref": "#/components/schemas/AnyObject"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/AnyObject"
+          },
+          "period": {
+            "$ref": "#/components/schemas/AnyObject"
+          },
+          "journals": {
+            "$ref": "#/components/schemas/AnyObject"
+          },
+          "supportSchedules": {
+            "$ref": "#/components/schemas/AnyObject"
+          },
+          "reconciliations": {
+            "$ref": "#/components/schemas/AnyObject"
+          },
+          "tasks": {
+            "$ref": "#/components/schemas/AnyObject"
+          },
+          "readiness": {
+            "$ref": "#/components/schemas/AnyObject"
+          },
+          "consolidationReadiness": {
+            "$ref": "#/components/schemas/ConsolidationReadiness"
+          },
+          "kpis": {
+            "$ref": "#/components/schemas/AnyObject"
+          },
+          "sla": {
+            "$ref": "#/components/schemas/AnyObject"
+          },
+          "alerts": {
+            "$ref": "#/components/schemas/AnyObject"
+          },
+          "stale": {
+            "$ref": "#/components/schemas/AnyObject"
+          },
+          "blockers": {
+            "$ref": "#/components/schemas/AnyObject"
+          },
+          "worklist": {
+            "$ref": "#/components/schemas/AnyObject"
+          }
+        },
+        "required": [
+          "tenantId",
+          "cycleId",
+          "row",
+          "consolidationReadiness"
         ]
       },
       "BankAccountRow": {

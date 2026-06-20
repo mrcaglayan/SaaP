@@ -4828,6 +4828,147 @@ function applyContractsOperationOverrides(specObject) {
   }
 }
 
+function applyCloseOperationOverrides(specObject) {
+  ensureTagPresent(specObject, "Close");
+  const paths = specObject.paths || {};
+  const schemas = specObject.components?.schemas || {};
+
+  Object.assign(schemas, {
+    ConsolidationReadinessStatus: {
+      type: "string",
+      enum: [
+        "WAITING_FOR_ENTITY_CLOSE",
+        "READY_TO_START",
+        "IN_PROGRESS",
+        "READY_TO_FINALIZE",
+        "LOCKED",
+      ],
+    },
+    ConsolidationReadinessBlockingReason: {
+      type: "object",
+      additionalProperties: true,
+      properties: {
+        code: { type: "string" },
+        message: { type: "string" },
+        count: { type: "integer", minimum: 0, nullable: true },
+        itemIds: {
+          type: "array",
+          items: intId,
+        },
+      },
+      required: ["code", "message"],
+    },
+    ConsolidationReadinessNextAction: {
+      type: "object",
+      additionalProperties: true,
+      properties: {
+        code: { type: "string" },
+        label: { type: "string" },
+        requiredPermissionCode: { type: "string", nullable: true },
+      },
+      required: ["code", "label"],
+    },
+    ConsolidationReadinessSource: {
+      type: "object",
+      additionalProperties: true,
+      properties: {
+        memberReadinessBlockCount: { type: "integer", minimum: 0 },
+        dependencyBlockerCount: { type: "integer", minimum: 0 },
+        draftAdjustmentCount: { type: "integer", minimum: 0 },
+        draftEliminationCount: { type: "integer", minimum: 0 },
+        entryCount: { type: "integer", minimum: 0 },
+        workflowGateRequired: { type: "boolean" },
+        workflowGateApproved: { type: "boolean" },
+        workflowBlockerCount: { type: "integer", minimum: 0 },
+        nonWorkflowBlockerCount: { type: "integer", minimum: 0 },
+      },
+    },
+    ConsolidationReadiness: {
+      type: "object",
+      additionalProperties: true,
+      properties: {
+        applicable: { type: "boolean" },
+        closeCycleId: intId,
+        closeCycleItemId: { ...intId, nullable: true },
+        consolidationGroupId: { ...intId, nullable: true },
+        groupCompanyId: { ...intId, nullable: true },
+        fiscalPeriodId: { ...intId, nullable: true },
+        runId: { ...intId, nullable: true },
+        runName: { type: "string", nullable: true },
+        status: {
+          allOf: [{ $ref: "#/components/schemas/ConsolidationReadinessStatus" }],
+          nullable: true,
+        },
+        canStart: { type: "boolean" },
+        canOpenRun: { type: "boolean" },
+        canFinalize: { type: "boolean" },
+        userCanStart: { type: "boolean" },
+        userCanOpen: { type: "boolean" },
+        userCanFinalize: { type: "boolean" },
+        operationalReadyToFinalize: { type: "boolean" },
+        workflowApproved: { type: "boolean" },
+        ownerUserId: { ...intId, nullable: true },
+        ownerRoleHint: { type: "string", nullable: true },
+        ownerResolutionSource: {
+          type: "string",
+          enum: ["ROLE", "PERMISSION", "ADMIN", "NONE"],
+          nullable: true,
+        },
+        blockingReasons: {
+          type: "array",
+          items: { $ref: "#/components/schemas/ConsolidationReadinessBlockingReason" },
+        },
+        nextAction: {
+          allOf: [{ $ref: "#/components/schemas/ConsolidationReadinessNextAction" }],
+          nullable: true,
+        },
+        source: { $ref: "#/components/schemas/ConsolidationReadinessSource" },
+        reasonCode: { type: "string", nullable: true },
+      },
+      required: ["applicable", "closeCycleId"],
+    },
+    CloseCycleCockpitResponse: {
+      type: "object",
+      additionalProperties: true,
+      properties: {
+        tenantId: intId,
+        cycleId: intId,
+        row: { $ref: "#/components/schemas/AnyObject" },
+        scope: { $ref: "#/components/schemas/AnyObject" },
+        period: { $ref: "#/components/schemas/AnyObject" },
+        journals: { $ref: "#/components/schemas/AnyObject" },
+        supportSchedules: { $ref: "#/components/schemas/AnyObject" },
+        reconciliations: { $ref: "#/components/schemas/AnyObject" },
+        tasks: { $ref: "#/components/schemas/AnyObject" },
+        readiness: { $ref: "#/components/schemas/AnyObject" },
+        consolidationReadiness: {
+          $ref: "#/components/schemas/ConsolidationReadiness",
+        },
+        kpis: { $ref: "#/components/schemas/AnyObject" },
+        sla: { $ref: "#/components/schemas/AnyObject" },
+        alerts: { $ref: "#/components/schemas/AnyObject" },
+        stale: { $ref: "#/components/schemas/AnyObject" },
+        blockers: { $ref: "#/components/schemas/AnyObject" },
+        worklist: { $ref: "#/components/schemas/AnyObject" },
+      },
+      required: ["tenantId", "cycleId", "row", "consolidationReadiness"],
+    },
+  });
+
+  const cockpitOperation = paths["/api/v1/close/cycles/{id}/cockpit"]?.get;
+  if (cockpitOperation) {
+    cockpitOperation.tags = ["Close"];
+    cockpitOperation.summary = "Read close-cycle cockpit";
+    cockpitOperation.description =
+      "Returns the close cockpit payload, including consolidationReadiness for consolidation-group cycles. Entity cycles return consolidationReadiness.applicable=false.";
+    cockpitOperation.responses = withStandardResponses(
+      "200",
+      "Close-cycle cockpit",
+      "#/components/schemas/CloseCycleCockpitResponse",
+    );
+  }
+}
+
 function applyRevenueRecognitionOperationOverrides(specObject) {
   ensureTagPresent(specObject, "RevenueRecognition");
   const paths = specObject.paths || {};
@@ -9671,12 +9812,22 @@ const spec = {
         tags: ["Consolidation"],
         operationId: "createConsolidationRun",
         summary: "Start consolidation run",
+        description:
+          "Creates a consolidation run. Replaying the same OFFICIAL group/period/runName returns the existing run with idempotent=true.",
         requestBody: bodyFromRef("#/components/schemas/ConsolidationRunInput"),
-        responses: withStandardResponses(
-          "201",
-          "Consolidation run created",
-          "#/components/schemas/ConsolidationRunResponse"
-        ),
+        responses: {
+          "200": jsonResponse(
+            "#/components/schemas/ConsolidationRunResponse",
+            "Existing OFFICIAL consolidation run returned from idempotent replay"
+          ),
+          "201": jsonResponse(
+            "#/components/schemas/ConsolidationRunResponse",
+            "Consolidation run created"
+          ),
+          "400": errorResponseRef,
+          "401": errorResponseRef,
+          "403": errorResponseRef,
+        },
       },
     },
     "/api/v1/consolidation/runs/{runId}": {
@@ -13572,17 +13723,24 @@ const spec = {
           consolidationGroupId: intId,
           fiscalPeriodId: intId,
           runName: shortText,
+          scenarioCode: { type: "string", nullable: true },
+          versionNo: intId,
           presentationCurrencyCode: currencyCode,
         },
-        required: ["consolidationGroupId", "fiscalPeriodId", "runName", "presentationCurrencyCode"],
+        required: ["consolidationGroupId", "fiscalPeriodId", "runName"],
       },
       ConsolidationRunResponse: {
         type: "object",
         properties: {
           ok: { type: "boolean" },
+          tenantId: { type: "integer", nullable: true },
           runId: { type: "integer", nullable: true },
+          idempotent: { type: "boolean" },
+          scenarioCode: { type: "string", nullable: true },
+          versionNo: { type: "integer", nullable: true },
+          presentationCurrencyCode: { type: "string", nullable: true },
         },
-        required: ["ok"],
+        required: ["ok", "runId", "idempotent"],
       },
       ConsolidationRunExecuteInput: {
         type: "object",
@@ -14759,6 +14917,7 @@ applyCariOperationOverrides(spec);
 applyCashOperationOverrides(spec);
 applyInventoryOperationOverrides(spec);
 applyFixedAssetsOperationOverrides(spec);
+applyCloseOperationOverrides(spec);
 applyContractsOperationOverrides(spec);
 applyRevenueRecognitionOperationOverrides(spec);
 applyBankAccountOperationOverrides(spec);

@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   getCloseCycleCockpit,
   listCloseCockpitCycles,
 } from "../api/closeCycles.js";
+import { createOfficialConsolidationRun } from "../api/consolidationRuns.js";
 import { useAuth } from "../auth/useAuth.js";
 import { useI18n } from "../i18n/useI18n.js";
 import EntityCloseMonitorPage from "./EntityCloseMonitorPage.jsx";
@@ -235,6 +236,40 @@ function getSeverityLabel(severity, l) {
       return l("Low", "Dusuk");
     default:
       return severity || "-";
+  }
+}
+
+function getAlertTypeTone(alertType) {
+  switch (String(alertType || "").trim().toUpperCase()) {
+    case "OVERDUE":
+      return "border-rose-200 bg-rose-50 text-rose-700";
+    case "DUE_SOON":
+      return "border-amber-200 bg-amber-50 text-amber-700";
+    case "BLOCKED":
+      return "border-cyan-200 bg-cyan-50 text-cyan-700";
+    case "ACTION_REQUIRED":
+      return "border-indigo-200 bg-indigo-50 text-indigo-700";
+    case "STALE":
+      return "border-slate-200 bg-slate-100 text-slate-700";
+    default:
+      return "border-slate-200 bg-slate-100 text-slate-700";
+  }
+}
+
+function getAlertTypeLabel(alertType, l) {
+  switch (String(alertType || "").trim().toUpperCase()) {
+    case "OVERDUE":
+      return l("Overdue", "Gecikti");
+    case "DUE_SOON":
+      return l("Due soon", "Suresi yaklasiyor");
+    case "BLOCKED":
+      return l("Blocked", "Blokeli");
+    case "ACTION_REQUIRED":
+      return l("Action required", "Aksiyon gerekli");
+    case "STALE":
+      return l("Stale", "Guncel degil");
+    default:
+      return alertType || "-";
   }
 }
 
@@ -1324,20 +1359,8 @@ function AlertList({ alertSnapshot = null, l }) {
             <div className="flex flex-wrap items-center gap-2">
               {renderStatusPill(getSeverityLabel(row.severity, l), getSeverityTone(row.severity))}
               {renderStatusPill(
-                row.alertType === "OVERDUE"
-                  ? l("Overdue", "Gecikti")
-                  : row.alertType === "DUE_SOON"
-                    ? l("Due soon", "Suresi yaklasiyor")
-                    : row.alertType === "BLOCKED"
-                      ? l("Blocked", "Blokeli")
-                      : l("Stale", "Guncel degil"),
-                row.alertType === "OVERDUE"
-                  ? "border-rose-200 bg-rose-50 text-rose-700"
-                  : row.alertType === "DUE_SOON"
-                    ? "border-amber-200 bg-amber-50 text-amber-700"
-                    : row.alertType === "BLOCKED"
-                      ? "border-cyan-200 bg-cyan-50 text-cyan-700"
-                      : "border-slate-200 bg-slate-100 text-slate-700",
+                getAlertTypeLabel(row.alertType, l),
+                getAlertTypeTone(row.alertType),
               )}
             </div>
           </div>
@@ -1385,6 +1408,29 @@ function buildTaskBoardPath(cycleId, taskId = null) {
   }
   const query = params.toString();
   return `/app/donem-sonu-islemler/yillik/kapanis-gorevleri${query ? `?${query}` : ""}`;
+}
+
+function buildConsolidationRunPath({ consolidationGroupId, runId }) {
+  const params = new URLSearchParams();
+  if (toPositiveInt(consolidationGroupId)) {
+    params.set("consolidationGroupId", String(toPositiveInt(consolidationGroupId)));
+  }
+  if (toPositiveInt(runId)) {
+    params.set("runId", String(toPositiveInt(runId)));
+  }
+  const query = params.toString();
+  return `/app/donem-sonu-islemler/yillik/konsolidasyon-raporlari${query ? `?${query}` : ""}`;
+}
+
+function findOfficialConsolidationRow(rows = [], readiness = null) {
+  const expectedRunName = toUpperText(readiness?.runName || "OFFICIAL");
+  return (
+    (Array.isArray(rows) ? rows : []).find(
+      (row) =>
+        toUpperText(row?.itemType) === "CONSOLIDATION_RUN" &&
+        toUpperText(row?.runName) === expectedRunName,
+    ) || null
+  );
 }
 
 function TaskMiniList({ rows = [], emptyText, cycleId, l }) {
@@ -1606,14 +1652,17 @@ function StaleList({ staleSnapshot = null, l }) {
 }
 
 /**
- * Render the operational close cockpit as a read-only monitoring surface with
- * KPI, blocker, stale, and readiness visibility layered onto one cycle view.
+ * Render the operational close cockpit with KPI, blocker, stale, readiness,
+ * and narrowly permissioned consolidation-start visibility layered onto one cycle view.
  */
 export default function CloseCockpitPage() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const { hasPermission } = useAuth();
   const { l } = useI18n();
   const canReadCockpit = hasPermission("close.cockpit.read");
+  const canCreateConsolidationRunLocal = hasPermission("consolidation.run.create");
+  const canReadConsolidationRunLocal = hasPermission("consolidation.run.read");
   const canAccessCycleManager =
     hasPermission("close.cycle.read") ||
     hasPermission("close.cycle.write") ||
@@ -1625,6 +1674,8 @@ export default function CloseCockpitPage() {
   const [loadingCycles, setLoadingCycles] = useState(false);
   const [loadingCockpit, setLoadingCockpit] = useState(false);
   const [error, setError] = useState("");
+  const [actionMessage, setActionMessage] = useState("");
+  const [runningAction, setRunningAction] = useState("");
   const [reloadNonce, setReloadNonce] = useState(0);
 
   const cycleStatusFilter = normalizeCycleFilterValue(
@@ -1636,6 +1687,7 @@ export default function CloseCockpitPage() {
   const selectedCycleStatus = toUpperText(
     cockpit?.row?.status || selectedCycleListRow?.status,
   );
+  const consolidationReadiness = cockpit?.consolidationReadiness || null;
 
   const replaceCycleSearchParams = useCallback((nextCycleId, nextFilter = cycleStatusFilter) => {
     const nextParams = new URLSearchParams(searchParams);
@@ -1740,6 +1792,122 @@ export default function CloseCockpitPage() {
     };
   }, [canReadCockpit, l, selectedCycleId]);
 
+  const onOpenConsolidationRun = useCallback(
+    (readinessInput = null) => {
+      const readiness = readinessInput || consolidationReadiness;
+      const runId = toPositiveInt(readiness?.runId);
+      const consolidationGroupId = toPositiveInt(readiness?.consolidationGroupId);
+      if (!readiness?.canOpenRun || !canReadConsolidationRunLocal) {
+        setError(
+          l(
+            "Missing permission: consolidation.run.read",
+            "Eksik yetki: consolidation.run.read",
+          ),
+        );
+        return;
+      }
+      if (!runId) {
+        setError(
+          l(
+            "Consolidation run is not available yet.",
+            "Konsolidasyon kosusu henuz hazir degil.",
+          ),
+        );
+        return;
+      }
+      setError("");
+      setActionMessage("");
+      navigate(buildConsolidationRunPath({ consolidationGroupId, runId }));
+    },
+    [canReadConsolidationRunLocal, consolidationReadiness, l, navigate],
+  );
+
+  const onStartConsolidationRun = useCallback(async () => {
+    const readiness = consolidationReadiness;
+    if (!readiness?.canStart || !canCreateConsolidationRunLocal) {
+      setError(
+        l(
+          "Missing permission: consolidation.run.create",
+          "Eksik yetki: consolidation.run.create",
+        ),
+      );
+      return;
+    }
+
+    const consolidationGroupId = toPositiveInt(readiness?.consolidationGroupId);
+    const fiscalPeriodId = toPositiveInt(readiness?.fiscalPeriodId);
+    if (!consolidationGroupId || !fiscalPeriodId) {
+      setError(
+        l(
+          "Consolidation group and fiscal period are required.",
+          "Konsolidasyon grubu ve mali donem zorunludur.",
+        ),
+      );
+      return;
+    }
+
+    const officialRow = findOfficialConsolidationRow(
+      cockpit?.worklist?.rows || [],
+      readiness,
+    );
+
+    setRunningAction("start-consolidation-run");
+    setError("");
+    setActionMessage("");
+    try {
+      const response = await createOfficialConsolidationRun({
+        consolidationGroupId,
+        fiscalPeriodId,
+        presentationCurrencyCode:
+          officialRow?.presentationCurrencyCode ||
+          cockpit?.scope?.presentationCurrencyCode ||
+          undefined,
+        versionNo: toPositiveInt(officialRow?.versionNo) || 1,
+      });
+      const runId = toPositiveInt(response?.runId);
+      const canOpenStartedRun =
+        Boolean(readiness?.userCanOpen) && canReadConsolidationRunLocal;
+      setActionMessage(
+        canOpenStartedRun
+          ? response?.idempotent
+            ? l(
+                "Existing official consolidation run opened.",
+                "Mevcut resmi konsolidasyon kosusu acildi.",
+              )
+            : l(
+                "Official consolidation run started.",
+                "Resmi konsolidasyon kosusu baslatildi.",
+              )
+          : l(
+              "Official consolidation run started or already exists. A user with consolidation.run.read can open it.",
+              "Resmi konsolidasyon kosusu baslatildi veya zaten mevcut. consolidation.run.read yetkisi olan bir kullanici acabilir.",
+            ),
+      );
+      setReloadNonce((current) => current + 1);
+      if (runId && canOpenStartedRun) {
+        navigate(buildConsolidationRunPath({ consolidationGroupId, runId }));
+      }
+    } catch (err) {
+      setError(
+        err?.response?.data?.message ||
+          err?.normalizedError?.message ||
+          err?.message ||
+          l(
+            "Failed to start consolidation run.",
+            "Konsolidasyon kosusu baslatilamadi.",
+          ),
+      );
+    } finally {
+      setRunningAction("");
+    }
+  }, [
+    canCreateConsolidationRunLocal,
+    cockpit,
+    consolidationReadiness,
+    l,
+    navigate,
+  ]);
+
   if (!canReadCockpit) {
     return (
       <div className="mx-auto max-w-3xl rounded-2xl border border-amber-200 bg-amber-50 p-6">
@@ -1766,6 +1934,16 @@ export default function CloseCockpitPage() {
     getDueStateTone,
     getDueStateLabel: (status) => getDueStateLabel(status, l),
     formatDateTime,
+    canCreateConsolidationRun:
+      Boolean(consolidationReadiness?.userCanStart) &&
+      canCreateConsolidationRunLocal,
+    canReadConsolidationRun:
+      Boolean(consolidationReadiness?.userCanOpen) &&
+      canReadConsolidationRunLocal,
+    onStartConsolidationRun,
+    onOpenConsolidationRun,
+    consolidationReadiness,
+    startingConsolidationRun: runningAction === "start-consolidation-run",
   };
 
   return (
@@ -1804,6 +1982,11 @@ export default function CloseCockpitPage() {
       {error ? (
         <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
           {error}
+        </div>
+      ) : null}
+      {actionMessage ? (
+        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
+          {actionMessage}
         </div>
       ) : null}
 
@@ -1846,8 +2029,8 @@ export default function CloseCockpitPage() {
               </div>
               <p className="mt-1 text-xs text-slate-500">
                 {l(
-                  "Create, provision, and lock actions now live on the Close Cycles manager so this cockpit can stay read-only under close.cockpit.read.",
-                  "Bu kokpit close.cockpit.read altinda salt okunur kalsin diye olusturma, provision ve kilitleme aksiyonlari artik Kapanis Donguleri yoneticisinde yer alir.",
+                  "Create, provision, and lock actions stay on the Close Cycles manager; this cockpit only exposes the governed consolidation start action when readiness allows it.",
+                  "Olusturma, provision ve kilitleme aksiyonlari Kapanis Donguleri yoneticisinde kalir; bu kokpit yalnizca hazirlik izin verdiginde yonetilen konsolidasyon baslatma aksiyonunu gosterir.",
                 )}
               </p>
               <Link
@@ -2007,13 +2190,21 @@ export default function CloseCockpitPage() {
                     </h3>
                     <p className="mt-1 text-sm text-slate-500">
                       {l(
-                        "PR-05 groups due-soon, overdue, blocked, and stale attention rows on the same close surface.",
-                        "PR-05, suresi yaklasan, geciken, blokeli ve stale dikkat satirlarini ayni kapanis yuzeyinde toplar.",
+                        "PR-05 groups action-required, due-soon, overdue, blocked, and stale attention rows on the same close surface.",
+                        "PR-05, aksiyon gerekli, suresi yaklasan, geciken, blokeli ve stale dikkat satirlarini ayni kapanis yuzeyinde toplar.",
                       )}
                     </p>
                   </div>
                 </div>
-                <div className="mb-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                <div className="mb-5 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+                  <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-4">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-indigo-700">
+                      {l("Action required", "Aksiyon gerekli")}
+                    </div>
+                    <div className="mt-2 text-2xl font-semibold text-indigo-900">
+                      {cockpit?.alerts?.panels?.actionRequired?.total || 0}
+                    </div>
+                  </div>
                   <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4">
                     <div className="text-xs font-semibold uppercase tracking-wide text-rose-700">
                       {l("Overdue alerts", "Geciken uyarilar")}

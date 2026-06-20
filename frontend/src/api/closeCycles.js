@@ -62,6 +62,10 @@ export async function lockCloseCycle(cycleId, payload = {}) {
   return response.data;
 }
 
+/**
+ * Read one cockpit payload, including the backend-owned consolidationReadiness
+ * signal for consolidation-group cycles.
+ */
 export async function getCloseCycleCockpit(cycleId) {
   const response = await api.get(`/api/v1/close/cycles/${cycleId}/cockpit`);
   return response.data;

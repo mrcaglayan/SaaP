@@ -48,6 +48,7 @@ function formatHours(value) {
 }
 
 function buildAlertRow(input = {}) {
+  const ownerUserId = parsePositiveInt(input.ownerUserId);
   return {
     alertKey: String(input.alertKey || "").trim(),
     alertCode: String(input.alertCode || "").trim().toUpperCase() || "CLOSE_ALERT",
@@ -57,14 +58,81 @@ function buildAlertRow(input = {}) {
     message: String(input.message || "").trim() || "Close alert is active",
     closeCycleId: parsePositiveInt(input.closeCycleId),
     closeCycleItemId: parsePositiveInt(input.closeCycleItemId),
+    subjectType: input.subjectType || null,
+    subjectId: parsePositiveInt(input.subjectId),
     itemType: input.itemType || null,
     itemKey: input.itemKey || null,
-    owner: input.owner || null,
+    owner: input.owner || (ownerUserId ? { userId: ownerUserId } : null),
     dueDate: input.dueDate || null,
     firstTriggeredAt: input.firstTriggeredAt || null,
     drillPath: input.drillPath || null,
     sourceKind: input.sourceKind || "ITEM",
     payload: input.payload ?? null,
+  };
+}
+
+/**
+ * Build the canonical live/durable alert payload for the ready-to-start
+ * consolidation signal. The subject intentionally stays on the close-cycle item
+ * until the official run exists, so the alert resolves instead of moving to the
+ * run record.
+ */
+export function buildReadyToStartConsolidationAlertPayload({
+  cycle,
+  consolidationReadiness,
+} = {}) {
+  if (toUpperText(consolidationReadiness?.status) !== "READY_TO_START") {
+    return null;
+  }
+  const closeCycleId = parsePositiveInt(cycle?.id ?? consolidationReadiness?.closeCycleId);
+  const closeCycleItemId = parsePositiveInt(consolidationReadiness?.closeCycleItemId);
+  if (!closeCycleId || !closeCycleItemId) {
+    return null;
+  }
+
+  const consolidationGroupId = parsePositiveInt(consolidationReadiness?.consolidationGroupId);
+  const fiscalPeriodId = parsePositiveInt(
+    consolidationReadiness?.fiscalPeriodId ?? cycle?.fiscalPeriodId,
+  );
+  const runName = String(consolidationReadiness?.runName || "OFFICIAL")
+    .trim()
+    .toUpperCase();
+  const alertKey = [
+    "READINESS",
+    closeCycleId,
+    closeCycleItemId,
+    "CONSOLIDATION_RUN",
+    consolidationGroupId || "GROUP",
+    fiscalPeriodId || "PERIOD",
+    runName || "OFFICIAL",
+    "READY_TO_START",
+  ].join(":");
+
+  return {
+    alertKey,
+    alertCode: "READY_TO_START_CONSOLIDATION",
+    alertType: "ACTION_REQUIRED",
+    severity: "HIGH",
+    title: "Ready to start consolidation",
+    message:
+      "All required member close inputs are locked. Start the official consolidation run.",
+    closeCycleId,
+    closeCycleItemId,
+    subjectType: "CLOSE_CYCLE_ITEM",
+    subjectId: closeCycleItemId,
+    ownerUserId: parsePositiveInt(consolidationReadiness?.ownerUserId),
+    firstTriggeredAt: cycle?.updatedAt || cycle?.createdAt || null,
+    sourceKind: "READINESS",
+    payload: {
+      sourceKind: "READINESS",
+      itemType: "CONSOLIDATION_RUN",
+      runName: runName || "OFFICIAL",
+      status: "READY_TO_START",
+      closeCycleItemId,
+      consolidationGroupId,
+      fiscalPeriodId,
+      ownerRoleHint: consolidationReadiness?.ownerRoleHint || null,
+    },
   };
 }
 
@@ -106,9 +174,9 @@ function buildPanel(rows = []) {
 }
 
 /**
- * Build the live PR-05 close alert snapshot from due-state, blocker, and
- * stale visibility inputs. Step 65 keeps this as read-time visibility only;
- * durable scheduler-backed escalation remains future work.
+ * Build the live PR-05 close alert snapshot from due-state, blocker, stale,
+ * and readiness inputs. Durable task/readiness upsert and resolution stay in
+ * the close-alert persistence service.
  */
 export async function buildCloseCycleAlertSnapshot(
   {
@@ -116,6 +184,7 @@ export async function buildCloseCycleAlertSnapshot(
     worklistRows = [],
     slaSnapshot = null,
     latestStaleEventsByItemId = new Map(),
+    consolidationReadiness = null,
   } = {},
   _actorCtx = {}
 ) {
@@ -127,6 +196,13 @@ export async function buildCloseCycleAlertSnapshot(
     (slaSnapshot?.items || []).map((row) => [parsePositiveInt(row.closeCycleItemId), row])
   );
   const rows = [];
+  const readinessAlert = buildReadyToStartConsolidationAlertPayload({
+    cycle,
+    consolidationReadiness,
+  });
+  if (readinessAlert) {
+    rows.push(buildAlertRow(readinessAlert));
+  }
 
   const cycleSla = slaSnapshot?.cycle || null;
   if (cycleSla?.dueState === "DUE_SOON" || cycleSla?.dueState === "OVERDUE") {
@@ -255,6 +331,7 @@ export async function buildCloseCycleAlertSnapshot(
     overdue: sortedRows.filter((row) => row.alertType === "OVERDUE").length,
     blocked: sortedRows.filter((row) => row.alertType === "BLOCKED").length,
     stale: sortedRows.filter((row) => row.alertType === "STALE").length,
+    actionRequired: sortedRows.filter((row) => row.alertType === "ACTION_REQUIRED").length,
   };
 
   return {
@@ -265,10 +342,14 @@ export async function buildCloseCycleAlertSnapshot(
       dueSoon: buildPanel(sortedRows.filter((row) => row.alertType === "DUE_SOON")),
       blocked: buildPanel(sortedRows.filter((row) => row.alertType === "BLOCKED")),
       stale: buildPanel(sortedRows.filter((row) => row.alertType === "STALE")),
+      actionRequired: buildPanel(
+        sortedRows.filter((row) => row.alertType === "ACTION_REQUIRED"),
+      ),
     },
   };
 }
 
 export default {
   buildCloseCycleAlertSnapshot,
+  buildReadyToStartConsolidationAlertPayload,
 };

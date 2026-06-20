@@ -52,11 +52,15 @@ import {
   listCloseTaskLockBlockers,
   materializeCloseTasksForCycle,
 } from "./close.tasks.service.js";
-import { syncCloseTaskAlertsForCycle } from "./close.alerts-persistence.service.js";
+import {
+  syncCloseReadinessAlertsForCycle,
+  syncCloseTaskAlertsForCycle,
+} from "./close.alerts-persistence.service.js";
 import {
   buildCloseCycleKpiSnapshot,
   syncCloseCycleKpiSnapshots,
 } from "./close.kpis.service.js";
+import { getConsolidationReadyToStartStatus } from "./consolidation.ready-to-start.service.js";
 import { getLocalClosePackReviewGate } from "./local.close-pack.workflow.service.js";
 import { getConsolidationRunReviewGate } from "./consolidation.review-gate.service.js";
 import { getPeriodCloseRunReviewGate } from "./gl.period-closing.review-gate.service.js";
@@ -471,7 +475,12 @@ function buildAlertPanel(rows = []) {
 }
 
 function buildMergedAlertSnapshot(rows = []) {
-  const sortedRows = [...rows].sort((left, right) => {
+  const rowsByKey = new Map();
+  rows.forEach((row, index) => {
+    const alertKey = String(row?.alertKey || "").trim() || `UNKEYED:${index}`;
+    rowsByKey.set(alertKey, row);
+  });
+  const sortedRows = [...rowsByKey.values()].sort((left, right) => {
     const severityDelta = toSeverityWeight(right?.severity) - toSeverityWeight(left?.severity);
     if (severityDelta !== 0) {
       return severityDelta;
@@ -495,12 +504,16 @@ function buildMergedAlertSnapshot(rows = []) {
       overdue: sortedRows.filter((row) => row.alertType === "OVERDUE").length,
       blocked: sortedRows.filter((row) => row.alertType === "BLOCKED").length,
       stale: sortedRows.filter((row) => row.alertType === "STALE").length,
+      actionRequired: sortedRows.filter((row) => row.alertType === "ACTION_REQUIRED").length,
     },
     panels: {
       overdue: buildAlertPanel(sortedRows.filter((row) => row.alertType === "OVERDUE")),
       dueSoon: buildAlertPanel(sortedRows.filter((row) => row.alertType === "DUE_SOON")),
       blocked: buildAlertPanel(sortedRows.filter((row) => row.alertType === "BLOCKED")),
       stale: buildAlertPanel(sortedRows.filter((row) => row.alertType === "STALE")),
+      actionRequired: buildAlertPanel(
+        sortedRows.filter((row) => row.alertType === "ACTION_REQUIRED"),
+      ),
     },
   };
 }
@@ -1033,6 +1046,7 @@ async function buildCycleCockpitModel(cycleId, actorCtx = {}) {
     currentConsolidationRunContexts,
     taskSummary,
     taskLockBlockers,
+    consolidationReadiness,
   ] =
     await Promise.all([
       listCycleDependencyBlockers(cycleId, {
@@ -1091,6 +1105,11 @@ async function buildCycleCockpitModel(cycleId, actorCtx = {}) {
         tenantId,
         runQuery,
       }),
+      getConsolidationReadyToStartStatus(cycleId, {
+        ...actorCtx,
+        tenantId,
+        runQuery,
+      }),
     ]);
   const dependencyRows = Array.isArray(dependencyResult?.rows) ? dependencyResult.rows : [];
   const latestStaleEventsByItemId = new Map(
@@ -1137,15 +1156,33 @@ async function buildCycleCockpitModel(cycleId, actorCtx = {}) {
     worklistRows: baseWorklistRows,
     slaSnapshot,
     latestStaleEventsByItemId,
+    consolidationReadiness,
   });
   const taskAlertResult = await syncCloseTaskAlertsForCycle(cycle.id, {
     ...actorCtx,
     tenantId,
     runQuery,
   });
-  const alertSnapshot = mergeCloseAlertSnapshots(itemAlertSnapshot, {
-    rows: taskAlertResult.rows || [],
-  });
+  const readinessAlertResult = await syncCloseReadinessAlertsForCycle(
+    {
+      cycle,
+      consolidationReadiness,
+    },
+    {
+      ...actorCtx,
+      tenantId,
+      runQuery,
+    },
+  );
+  const alertSnapshot = mergeCloseAlertSnapshots(
+    itemAlertSnapshot,
+    {
+      rows: taskAlertResult.rows || [],
+    },
+    {
+      rows: readinessAlertResult.rows || [],
+    },
+  );
   const slaByItemId = new Map(
     (slaSnapshot?.items || []).map((row) => [parsePositiveInt(row.closeCycleItemId), row])
   );
@@ -1210,6 +1247,7 @@ async function buildCycleCockpitModel(cycleId, actorCtx = {}) {
     reconciliations,
     tasks: taskSummary,
     readiness,
+    consolidationReadiness,
     kpis,
     sla: slaSnapshot,
     alerts: alertSnapshot,

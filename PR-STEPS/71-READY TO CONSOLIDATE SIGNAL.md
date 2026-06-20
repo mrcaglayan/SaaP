@@ -59,6 +59,7 @@ READY_TO_START ignores workflow approval.
 READY_TO_START does not use close dependency START blockers.
 READY_TO_FINALIZE means operationally ready, not necessarily workflow approved.
 canFinalize means operationally ready + workflow approved + user has consolidation.run.finalize.
+Open-run actions require consolidation.run.read; close.cockpit.read alone only allows viewing the cockpit readiness status.
 ```
 
 Additional locked V1 semantics:
@@ -70,6 +71,7 @@ A group cycle with zero LOCAL_CLOSE_PACK items is not READY_TO_START.
 V1 extends GET /api/v1/close/cycles/:cycleId/cockpit only; no separate readiness route yet.
 If an OFFICIAL run already exists but is not linked to the close-cycle item, the readiness service treats the run as existing and does not return READY_TO_START.
 ACTION_REQUIRED alert subject points to the close-cycle item before the run exists.
+Consolidation-run action permissions are checked at RBAC GROUP scope resolved from consolidation_groups.group_company_id, not against consolidation_group_id directly.
 ```
 
 Current constraints this plan must respect:
@@ -192,6 +194,7 @@ Responsibilities:
 - split operational finalization readiness from workflow approval
 - detect existing official runs by `(consolidationGroupId, fiscalPeriodId, runName = OFFICIAL)` even if they are not linked to the close-cycle item yet
 - compute permission booleans on the backend using secondary scoped permission checks
+- compute open-run permission separately from cockpit visibility
 - produce one normalized status payload
 
 Do not force `consolidation.review-gate.service.js` to accept a missing run. If
@@ -201,12 +204,18 @@ review gate focused on real consolidation runs.
 Permission booleans are backend-owned in V1:
 
 ```txt
-userCanStart = user has consolidation.run.create at the consolidation group scope
-userCanFinalize = user has consolidation.run.finalize at the consolidation group scope
+userCanStart = user has consolidation.run.create at the RBAC GROUP scope resolved from consolidation_groups.group_company_id
+userCanOpen = user has consolidation.run.read at the RBAC GROUP scope resolved from consolidation_groups.group_company_id
+userCanFinalize = user has consolidation.run.finalize at the RBAC GROUP scope resolved from consolidation_groups.group_company_id
 ```
 
+Do not check these permissions against `consolidation_group_id` directly. The
+consolidation domain id and the RBAC `GROUP` scope id are different concepts;
+the RBAC `GROUP` scope id is `consolidation_groups.group_company_id`.
+
 The frontend may still use local `hasPermission()` as a defensive UI guard, but
-the API payload is the authoritative source for `canStart` and `canFinalize`.
+the API payload is the authoritative source for `canStart`, `canOpenRun`, and
+`canFinalize`.
 
 Suggested API shape:
 
@@ -223,6 +232,7 @@ Suggested API shape:
   canOpenRun: false,
   canFinalize: false,
   userCanStart: true,
+  userCanOpen: true,
   userCanFinalize: false,
   operationalReadyToFinalize: false,
   workflowApproved: false,
@@ -261,6 +271,17 @@ Status resolution order:
    `FRESH`, return `READY_TO_START`.
 6. Otherwise return `WAITING_FOR_ENTITY_CLOSE`.
 
+When splitting review-gate blockers, classify workflow blockers by stable source
+metadata, not only by code:
+
+```txt
+workflowBlockers = blockers where blocker.drill.surface = workflow
+nonWorkflowBlockers = all other blockers
+```
+
+Do not rely only on codes such as `APPROVAL_REQUIRED`, because workflow error
+codes can vary while `drill.surface = workflow` is the intended source marker.
+
 Derived booleans:
 
 ```txt
@@ -268,6 +289,7 @@ operationalReadyToFinalize = run exists and non-workflow blockers are clear
 workflowApproved = workflow gate is absent or approved
 canFinalize = operationalReadyToFinalize && workflowApproved && userCanFinalize
 canStart = status is READY_TO_START && userCanStart
+canOpenRun = runId exists && userCanOpen
 ```
 
 Acceptance:
@@ -281,6 +303,8 @@ Acceptance:
 - `READY_TO_START` requires locked and fresh local close items.
 - Existing unlinked official run prevents `READY_TO_START`.
 - Missing cycle item returns a clear non-ready diagnostic.
+- Run-open CTA is not available when the user lacks `consolidation.run.read`,
+  even if the user can read the cockpit readiness status.
 
 ---
 
@@ -316,6 +340,10 @@ Permission:
 ```txt
 close.cockpit.read
 ```
+
+`close.cockpit.read` controls cockpit payload visibility only. It must not imply
+`consolidation.run.read`; the readiness payload should still expose status while
+withholding open-run actions when `userCanOpen` is false.
 
 Scope:
 
@@ -399,6 +427,11 @@ Open consolidation run
 Open finalization review
 ```
 
+Only show `Open consolidation run` or `Open finalization review` when
+`canOpenRun` is true. A user with `close.cockpit.read` but without
+`consolidation.run.read` can see the derived readiness status, but must not see
+or trigger the run-detail CTA.
+
 - If status is `LOCKED`, show:
 
 ```txt
@@ -409,7 +442,7 @@ Required permissions:
 
 ```txt
 consolidation.run.create      -> Start consolidation run
-consolidation.run.read        -> Open run / view readiness
+consolidation.run.read        -> Open run / view run details
 consolidation.run.finalize    -> Finalize after review/workflow gate
 ```
 
@@ -420,6 +453,7 @@ Acceptance:
 - Clicking start creates/opens the official consolidation run only once.
 - Duplicate clicks reuse/open existing run.
 - Double-click / retry does not surface duplicate-key errors.
+- Open-run and finalization-review CTAs require `canOpenRun`.
 
 ---
 
@@ -483,6 +517,7 @@ Acceptance:
   even if workflow approval is still pending.
 - When run is locked, monitor shows `LOCKED`.
 - Start CTA requires `consolidation.run.create`.
+- Open-run and finalization-review CTAs require `consolidation.run.read`.
 - Cockpit read-only explanatory copy is updated so the new permitted action is not contradictory.
 
 ---
@@ -531,6 +566,10 @@ payload: {
   runName: "OFFICIAL"
 }
 ```
+
+Persisted readiness alerts must map to `sourceKind = READINESS` or
+`sourceKind = CLOSE_CYCLE_ITEM`, not `TASK`, so cockpit/debug output does not
+misrepresent a readiness prompt as a close-task alert.
 
 If close task module is available, optionally materialize a task:
 
@@ -586,7 +625,8 @@ resolver is implemented in the same PR. If exact owner resolution is deferred,
 Rules:
 
 - CTA permission check is based on `consolidation.run.create`.
-- Read visibility is based on `consolidation.run.read` or `close.cockpit.read`.
+- Cockpit readiness visibility is based on `close.cockpit.read`.
+- Run-detail/open visibility is based on `consolidation.run.read`.
 - Finalize action remains based on `consolidation.run.finalize`.
 - The signal can name an owner even when the current viewer is not the owner.
 
@@ -647,6 +687,7 @@ Test scenarios:
 18. Existing unlinked OFFICIAL run -> `IN_PROGRESS` / `READY_TO_FINALIZE` / `LOCKED` based on run state, not `READY_TO_START`.
 19. `ACTION_REQUIRED` alert is rendered as "Action required" in cockpit panels and lists.
 20. `userCanStart` / `userCanFinalize` are backend-computed with secondary scoped permission checks.
+21. User with `close.cockpit.read` but without `consolidation.run.read` can see readiness status but cannot see or open the run CTA.
 
 Acceptance:
 

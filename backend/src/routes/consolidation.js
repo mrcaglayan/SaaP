@@ -1389,6 +1389,144 @@ async function getRunWithContext(tenantId, runId) {
   return result.rows[0] || null;
 }
 
+/**
+ * Load a consolidation run through its natural uniqueness key. This is used for
+ * OFFICIAL run creation replays after the database unique key wins the race.
+ */
+async function getRunByNaturalKey({
+  tenantId,
+  consolidationGroupId,
+  fiscalPeriodId,
+  runName,
+  runQuery = query,
+}) {
+  const result = await runQuery(
+    `SELECT
+       cr.id,
+       cr.consolidation_group_id,
+       cr.fiscal_period_id,
+       cr.run_name,
+       cr.scenario_code,
+       cr.version_no,
+       cr.status,
+       cr.presentation_currency_code,
+       cr.started_by_user_id,
+       cr.started_at,
+       cr.finished_at,
+       cr.notes,
+       cg.tenant_id,
+       cg.group_company_id,
+       cg.code AS consolidation_group_code,
+       cg.name AS consolidation_group_name,
+       fp.start_date AS period_start_date,
+       fp.end_date AS period_end_date
+     FROM consolidation_runs cr
+     JOIN consolidation_groups cg ON cg.id = cr.consolidation_group_id
+     JOIN fiscal_periods fp ON fp.id = cr.fiscal_period_id
+     WHERE cg.tenant_id = ?
+       AND cr.consolidation_group_id = ?
+       AND cr.fiscal_period_id = ?
+       AND cr.run_name = ?
+     LIMIT 1`,
+    [
+      tenantId,
+      consolidationGroupId,
+      fiscalPeriodId,
+      String(runName || "")
+        .trim()
+        .toUpperCase(),
+    ],
+  );
+
+  return result.rows[0] || null;
+}
+
+function isDuplicateKeyError(err) {
+  return (
+    Number(err?.errno) === 1062 ||
+    String(err?.code || "").toUpperCase() === "ER_DUP_ENTRY"
+  );
+}
+
+function duplicateKeyName(err) {
+  const message = String(err?.sqlMessage || err?.message || "");
+  const match =
+    message.match(/for key ['"`]([^'"`]+)['"`]/i) ||
+    message.match(/key ['"`]([^'"`]+)['"`]/i);
+  const rawName = String(match?.[1] || "")
+    .split(".")
+    .pop();
+  return rawName.replace(/[`'"]/g, "").trim().toLowerCase();
+}
+
+function isConsolidationRunNaturalKeyDuplicate(err) {
+  if (!isDuplicateKeyError(err)) {
+    return false;
+  }
+  const keyName = duplicateKeyName(err);
+  return keyName === "uk_cons_run_unique";
+}
+
+function buildConsolidationRunCreateResponse({
+  tenantId,
+  runId,
+  scenarioCode,
+  versionNo,
+  presentationCurrencyCode,
+  idempotent,
+}) {
+  return {
+    ok: true,
+    tenantId,
+    runId,
+    idempotent: Boolean(idempotent),
+    scenarioCode: String(scenarioCode || "")
+      .trim()
+      .toUpperCase(),
+    versionNo: parsePositiveInt(versionNo) || 1,
+    presentationCurrencyCode: String(presentationCurrencyCode || "")
+      .trim()
+      .toUpperCase(),
+  };
+}
+
+/**
+ * Return the existing OFFICIAL run for an idempotent create replay and refresh
+ * its close-cycle source link before the caller opens it.
+ */
+async function resolveOfficialRunCreateReplay({
+  tenantId,
+  consolidationGroupId,
+  fiscalPeriodId,
+  runName,
+  userId,
+}) {
+  const existingRun = await getRunByNaturalKey({
+    tenantId,
+    consolidationGroupId,
+    fiscalPeriodId,
+    runName,
+  });
+
+  if (!existingRun) {
+    return null;
+  }
+
+  await autoLinkAndSyncSource("CONSOLIDATION_RUN", existingRun.id, {
+    tenantId,
+    userId,
+  });
+
+  return buildConsolidationRunCreateResponse({
+    tenantId,
+    runId: parsePositiveInt(existingRun.id),
+    scenarioCode: existingRun.scenario_code,
+    versionNo: existingRun.version_no,
+    presentationCurrencyCode: existingRun.presentation_currency_code,
+    idempotent: true,
+  });
+}
+
 async function requireRun(tenantId, runId) {
   const run = await getRunWithContext(tenantId, runId);
   if (!run) {
@@ -3599,93 +3737,116 @@ router.post(
       String(group.presentation_currency_code || "")
         .trim()
         .toUpperCase();
-    const runId = await withTransaction(async (tx) => {
-      if (runName === OFFICIAL_CONSOLIDATION_RUN_NAME) {
-        const governedItemsResult = await listExpectedConsolidationCycleItems(
-          {
-            tenantId,
+    let runId = null;
+    try {
+      runId = await withTransaction(async (tx) => {
+        if (runName === OFFICIAL_CONSOLIDATION_RUN_NAME) {
+          const governedItemsResult = await listExpectedConsolidationCycleItems(
+            {
+              tenantId,
+              consolidationGroupId,
+              fiscalPeriodId,
+              runName,
+            },
+            {
+              runQuery: tx.query,
+            },
+          );
+          const frozenCurrencies = Array.from(
+            new Set(
+              (governedItemsResult.rows || [])
+                .map((row) =>
+                  String(row?.presentationCurrencyCode || "")
+                    .trim()
+                    .toUpperCase(),
+                )
+                .filter(Boolean),
+            ),
+          );
+          if (frozenCurrencies.length > 1) {
+            throw badRequest(
+              "Conflicting close-cycle presentation currency snapshots were found for the requested OFFICIAL consolidation run",
+            );
+          }
+          if (frozenCurrencies[0]) {
+            effectivePresentationCurrencyCode = frozenCurrencies[0];
+            if (
+              requestedPresentationCurrencyCode &&
+              requestedPresentationCurrencyCode !== effectivePresentationCurrencyCode
+            ) {
+              throw badRequest(
+                "presentationCurrencyCode must match the frozen close-cycle snapshot for OFFICIAL consolidation runs",
+              );
+            }
+          }
+        }
+
+        if (!effectivePresentationCurrencyCode) {
+          throw badRequest(
+            "presentationCurrencyCode is required when no consolidation-group default or cycle-governed OFFICIAL snapshot is available",
+          );
+        }
+
+        const result = await tx.query(
+          `INSERT INTO consolidation_runs (
+              consolidation_group_id,
+              fiscal_period_id,
+              run_name,
+              scenario_code,
+              version_no,
+              status,
+              presentation_currency_code,
+              started_by_user_id
+           )
+           VALUES (?, ?, ?, ?, ?, 'DRAFT', ?, ?)`,
+          [
             consolidationGroupId,
             fiscalPeriodId,
             runName,
-          },
-          {
-            runQuery: tx.query,
-          },
+            scenarioCode,
+            versionNo,
+            effectivePresentationCurrencyCode,
+            startedByUserId,
+          ],
         );
-        const frozenCurrencies = Array.from(
-          new Set(
-            (governedItemsResult.rows || [])
-              .map((row) =>
-                String(row?.presentationCurrencyCode || "")
-                  .trim()
-                  .toUpperCase(),
-              )
-              .filter(Boolean),
-          ),
-        );
-        if (frozenCurrencies.length > 1) {
-          throw badRequest(
-            "Conflicting close-cycle presentation currency snapshots were found for the requested OFFICIAL consolidation run",
-          );
-        }
-        if (frozenCurrencies[0]) {
-          effectivePresentationCurrencyCode = frozenCurrencies[0];
-          if (
-            requestedPresentationCurrencyCode &&
-            requestedPresentationCurrencyCode !== effectivePresentationCurrencyCode
-          ) {
-            throw badRequest(
-              "presentationCurrencyCode must match the frozen close-cycle snapshot for OFFICIAL consolidation runs",
-            );
-          }
-        }
+
+        return parsePositiveInt(result.rows?.insertId);
+      });
+    } catch (err) {
+      if (
+        runName !== OFFICIAL_CONSOLIDATION_RUN_NAME ||
+        !isConsolidationRunNaturalKeyDuplicate(err)
+      ) {
+        throw err;
       }
 
-      if (!effectivePresentationCurrencyCode) {
-        throw badRequest(
-          "presentationCurrencyCode is required when no consolidation-group default or cycle-governed OFFICIAL snapshot is available",
-        );
+      const replayResponse = await resolveOfficialRunCreateReplay({
+        tenantId,
+        consolidationGroupId,
+        fiscalPeriodId,
+        runName,
+        userId: startedByUserId,
+      });
+      if (!replayResponse) {
+        throw err;
       }
 
-      const result = await tx.query(
-        `INSERT INTO consolidation_runs (
-            consolidation_group_id,
-            fiscal_period_id,
-            run_name,
-            scenario_code,
-            version_no,
-            status,
-            presentation_currency_code,
-            started_by_user_id
-         )
-         VALUES (?, ?, ?, ?, ?, 'DRAFT', ?, ?)`,
-        [
-          consolidationGroupId,
-          fiscalPeriodId,
-          runName,
-          scenarioCode,
-          versionNo,
-          effectivePresentationCurrencyCode,
-          startedByUserId,
-        ],
-      );
-
-      return parsePositiveInt(result.rows?.insertId);
-    });
+      return res.status(200).json(replayResponse);
+    }
 
     await autoLinkAndSyncSource("CONSOLIDATION_RUN", runId, {
       tenantId,
       userId: startedByUserId,
     });
 
-    return res.status(201).json({
-      ok: true,
+    return res.status(201).json(buildConsolidationRunCreateResponse({
       tenantId,
       runId,
+      idempotent: false,
       scenarioCode,
       versionNo,
       presentationCurrencyCode: effectivePresentationCurrencyCode,
-    });
+    }));
   }),
 );
 

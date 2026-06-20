@@ -1,7 +1,10 @@
 import { query } from "../db.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
+import { buildReadyToStartConsolidationAlertPayload } from "./close.alerts.service.js";
 
 const CLOSE_TASK_ALERT_SUBJECT_TYPE = "CLOSE_TASK_INSTANCE";
+const CLOSE_READINESS_ALERT_SUBJECT_TYPE = "CLOSE_CYCLE_ITEM";
+const CLOSE_READINESS_ALERT_CODE = "READY_TO_START_CONSOLIDATION";
 const CLOSE_TASK_TERMINAL_STATUSES = new Set(["APPROVED", "WAIVED", "CANCELLED"]);
 const TASK_SOURCE_CHECK_FAILED_STATUSES = new Set(["FAILED", "ERROR", "BLOCKED"]);
 
@@ -62,6 +65,17 @@ function mapCloseAlertRow(row) {
       payload = null;
     }
   }
+  const subjectType = row.subject_type || null;
+  const payloadSourceKind = toUpperText(payload?.sourceKind ?? payload?.source_kind);
+  const sourceKind =
+    payloadSourceKind ||
+    (toUpperText(row.alert_code) === CLOSE_READINESS_ALERT_CODE
+      ? "READINESS"
+      : toUpperText(subjectType) === CLOSE_TASK_ALERT_SUBJECT_TYPE
+        ? "TASK"
+        : toUpperText(subjectType) === CLOSE_READINESS_ALERT_SUBJECT_TYPE
+          ? "CLOSE_CYCLE_ITEM"
+          : subjectType || "ALERT");
   return {
     id: parsePositiveInt(row.id),
     tenantId: parsePositiveInt(row.tenant_id),
@@ -74,7 +88,7 @@ function mapCloseAlertRow(row) {
     message: row.message || "",
     closeCycleId: parsePositiveInt(row.close_cycle_id),
     closeCycleItemId: parsePositiveInt(row.close_cycle_item_id),
-    subjectType: row.subject_type || null,
+    subjectType,
     subjectId: parsePositiveInt(row.subject_id),
     owner: parsePositiveInt(row.owner_user_id)
       ? { userId: parsePositiveInt(row.owner_user_id) }
@@ -84,7 +98,7 @@ function mapCloseAlertRow(row) {
     lastTriggeredAt: row.last_triggered_at || null,
     resolvedAt: row.resolved_at || null,
     payload,
-    sourceKind: "TASK",
+    sourceKind,
     drillPath: payload?.drillPath || null,
   };
 }
@@ -383,6 +397,45 @@ export async function resolveStaleTaskAlertsForCycle(
   };
 }
 
+/**
+ * Resolve active ready-to-start readiness alerts for a cycle that were not
+ * produced by the latest readiness sync.
+ */
+export async function resolveStaleReadinessAlertsForCycle(
+  cycleId,
+  activeAlertKeys = [],
+  actorCtx = {},
+) {
+  const tenantId = resolveActorTenantId(actorCtx);
+  const userId = resolveActorUserId(actorCtx);
+  const runQuery = resolveActorRunQuery(actorCtx);
+  if (!tenantId) {
+    throw badRequest("tenantId is required");
+  }
+  const normalizedKeys = [...new Set((activeAlertKeys || []).filter(Boolean))];
+  const params = [userId || null, tenantId, parsePositiveInt(cycleId), CLOSE_READINESS_ALERT_CODE];
+  let keyGuard = "";
+  if (normalizedKeys.length > 0) {
+    keyGuard = ` AND alert_key NOT IN (${normalizedKeys.map(() => "?").join(", ")})`;
+    params.push(...normalizedKeys);
+  }
+  const result = await runQuery(
+    `UPDATE close_alerts
+     SET alert_state = 'RESOLVED',
+         resolved_at = CURRENT_TIMESTAMP,
+         updated_by_user_id = ?
+     WHERE tenant_id = ?
+       AND close_cycle_id = ?
+       AND alert_code = ?
+       AND alert_state = 'ACTIVE'
+       ${keyGuard}`,
+    params,
+  );
+  return {
+    resolvedCount: Number(result.rows?.affectedRows || 0),
+  };
+}
+
 async function listActiveTaskAlertsForCycle(cycleId, actorCtx = {}) {
   const tenantId = resolveActorTenantId(actorCtx);
   const runQuery = resolveActorRunQuery(actorCtx);
@@ -395,6 +448,22 @@ async function listActiveTaskAlertsForCycle(cycleId, actorCtx = {}) {
        AND alert_state = 'ACTIVE'
      ORDER BY severity DESC, due_at ASC, alert_key ASC`,
     [tenantId, parsePositiveInt(cycleId), CLOSE_TASK_ALERT_SUBJECT_TYPE],
+  );
+  return (result.rows || []).map(mapCloseAlertRow).filter(Boolean);
+}
+
+async function listActiveReadinessAlertsForCycle(cycleId, actorCtx = {}) {
+  const tenantId = resolveActorTenantId(actorCtx);
+  const runQuery = resolveActorRunQuery(actorCtx);
+  const result = await runQuery(
+    `SELECT *
+     FROM close_alerts
+     WHERE tenant_id = ?
+       AND close_cycle_id = ?
+       AND alert_code = ?
+       AND alert_state = 'ACTIVE'
+     ORDER BY severity DESC, due_at ASC, alert_key ASC`,
+    [tenantId, parsePositiveInt(cycleId), CLOSE_READINESS_ALERT_CODE],
   );
   return (result.rows || []).map(mapCloseAlertRow).filter(Boolean);
 }
@@ -457,10 +526,54 @@ export async function syncCloseTaskAlertsForCycle(cycleId, actorCtx = {}) {
   };
 }
 
+/**
+ * Sync the durable ready-to-start consolidation prompt for one close cycle.
+ * The alert is active only while the derived readiness status is
+ * `READY_TO_START`; any official-run creation moves the derived state and
+ * resolves this prompt on the next cockpit read.
+ */
+export async function syncCloseReadinessAlertsForCycle(
+  { cycle, consolidationReadiness } = {},
+  actorCtx = {},
+) {
+  const tenantId = resolveActorTenantId(actorCtx);
+  if (!tenantId) {
+    throw badRequest("tenantId is required");
+  }
+  const cycleId = parsePositiveInt(cycle?.id ?? consolidationReadiness?.closeCycleId);
+  if (!cycleId) {
+    throw badRequest("cycleId is required");
+  }
+
+  const alertPayload = buildReadyToStartConsolidationAlertPayload({
+    cycle,
+    consolidationReadiness,
+  });
+  const alertPayloads = alertPayload ? [alertPayload] : [];
+  for (const payload of alertPayloads) {
+    // eslint-disable-next-line no-await-in-loop
+    await upsertCloseAlert(payload, actorCtx);
+  }
+  const staleResult = await resolveStaleReadinessAlertsForCycle(
+    cycleId,
+    alertPayloads.map((payload) => payload.alertKey),
+    actorCtx,
+  );
+  const rows = await listActiveReadinessAlertsForCycle(cycleId, actorCtx);
+  return {
+    rows,
+    activeAlertKeys: alertPayloads.map((payload) => payload.alertKey),
+    upsertedCount: alertPayloads.length,
+    resolvedCount: staleResult.resolvedCount,
+  };
+}
+
 export default {
   buildCloseTaskAlertPayloadsFromRows,
   upsertCloseAlert,
+  syncCloseReadinessAlertsForCycle,
   syncCloseTaskAlertsForCycle,
   resolveCloseTaskAlerts,
+  resolveStaleReadinessAlertsForCycle,
   resolveStaleTaskAlertsForCycle,
 };
