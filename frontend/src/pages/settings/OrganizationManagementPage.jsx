@@ -684,6 +684,9 @@ export default function OrganizationManagementPage({ workspaceMode = "full" }) {
   const canWriteBanks = hasPermission("bank.accounts.write");
   const canReadCashRegisters = hasPermission("cash.register.read");
   const canReadCashSessions = canReadCashRegisters;
+  const canManageWorkflowSetup =
+    hasPermission("workflow.definition.write") ||
+    hasPermission("workflow.assignment.write");
   const isScopedCapitalFulfillmentOperator = Boolean(
     canManageShareholderCapitalFulfillment &&
       !canRunTenantSetup &&
@@ -2574,6 +2577,19 @@ export default function OrganizationManagementPage({ workspaceMode = "full" }) {
       return [];
     }
 
+    const focusedEntityLabel =
+      [
+        activationFocusLegalEntity?.code,
+        activationFocusLegalEntity?.name,
+      ]
+        .filter(Boolean)
+        .join(" - ") || `#${activationFocusLegalEntityId}`;
+    const missingWorkflowProcessTypes = Array.isArray(
+      activationWorkflowReadiness?.details?.missingProcessTypes
+    )
+      ? activationWorkflowReadiness.details.missingProcessTypes
+      : [];
+
     return [
       {
         key: "baseAccounting",
@@ -2863,7 +2879,54 @@ export default function OrganizationManagementPage({ workspaceMode = "full" }) {
                   "Workflow activation readiness has not been loaded for this legal entity yet.",
                   "Bu legal entity icin workflow aktivasyon hazirligi henuz yuklenmedi."
                 ),
-            actionPath: "/app/ayarlar/workflow-kurulumu",
+            actionPath: canManageWorkflowSetup
+              ? "/app/ayarlar/workflow-kurulumu"
+              : "",
+            actionLabel: canManageWorkflowSetup
+              ? l("Open workflow setup", "Workflow kurulumunu ac")
+              : "",
+            assignedOwnerLabel: canManageWorkflowSetup
+              ? ""
+              : l(
+                  "Waiting for workflow administrator",
+                  "Workflow yoneticisi bekleniyor"
+                ),
+            assignedOwnerDetail: canManageWorkflowSetup
+              ? ""
+              : l(
+                  "Assigned to the tenant setup owner. A workflow administrator must configure the missing period-close and consolidation assignments before this entity can go live.",
+                  "Tenant kurulum sorumlusuna atandi. Bu entity go-live olmadan once eksik donem kapanisi ve konsolidasyon atamalarini bir workflow yoneticisi yapilandirmalidir."
+                ),
+            escalationLabel: canManageWorkflowSetup
+              ? ""
+              : l(
+                  "Copy request for workflow admin",
+                  "Workflow yoneticisi icin talebi kopyala"
+                ),
+            escalationText: canManageWorkflowSetup
+              ? ""
+              : [
+                  l(
+                    "Activation workflow setup request",
+                    "Aktivasyon workflow kurulum talebi"
+                  ),
+                  `${l("Legal entity", "Legal entity")}: ${focusedEntityLabel}`,
+                  `${l(
+                    "Missing process assignments",
+                    "Eksik surec atamalari"
+                  )}: ${
+                    missingWorkflowProcessTypes.length > 0
+                      ? missingWorkflowProcessTypes.join(", ")
+                      : l(
+                          "Review workflow readiness details",
+                          "Workflow hazirlik detaylarini inceleyin"
+                        )
+                  }`,
+                  l(
+                    "Please configure the required workflow assignments for this legal entity so activation can continue.",
+                    "Aktivasyonun devam edebilmesi icin bu legal entity icin gerekli workflow atamalarini yapilandirin."
+                  ),
+                ].join("\n"),
           },
           {
             key: "localClose",
@@ -2913,6 +2976,7 @@ export default function OrganizationManagementPage({ workspaceMode = "full" }) {
     activationWorkflowReadiness,
     activationCashRegistersError,
     activationCashRegistersLoading,
+    canManageWorkflowSetup,
     canReadBooks,
     canReadBanks,
     canReadCashRegisters,
