@@ -16,6 +16,8 @@ const CLOSE_CYCLE_STATUS_SORT_ORDER = Object.freeze({
   PLANNED: 1,
   LOCKED: 2,
 });
+const CONSOLIDATION_REPORT_ROUTE_PATH =
+  "/app/donem-sonu-islemler/yillik/konsolidasyon-raporlari";
 
 function toPositiveInt(value) {
   const parsed = Number(value);
@@ -1398,6 +1400,145 @@ function AlertList({ alertSnapshot = null, l }) {
   );
 }
 
+function getValidActivityTimestamp(value) {
+  if (!value) {
+    return null;
+  }
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function getStaleActivityTitle(row, l) {
+  const subject = [row?.scopeLabel, row?.bookLabel].filter(Boolean).join(" / ");
+  return subject
+    ? `${subject} ${l("has stale changes", "stale degisiklikleri var")}`
+    : l("Stale item changed", "Stale oge degisti");
+}
+
+function buildRecentActivityItems({ alertSnapshot = null, staleSnapshot = null, l }) {
+  const items = [];
+  const alertRows = Array.isArray(alertSnapshot?.rows) ? alertSnapshot.rows : [];
+  for (const [index, row] of alertRows.entries()) {
+    const timestamp = getValidActivityTimestamp(row?.firstTriggeredAt);
+    if (!timestamp) {
+      continue;
+    }
+    items.push({
+      detail: row?.message || row?.alertCode || "",
+      key: `alert:${row?.alertKey || index}:${row.firstTriggeredAt}`,
+      meta: row?.itemKey || getAlertTypeLabel(row?.alertType, l),
+      occurredAt: row.firstTriggeredAt,
+      timestamp,
+      title: row?.title || getAlertTypeLabel(row?.alertType, l),
+      to: row?.drillPath || "",
+    });
+  }
+
+  const staleRows = Array.isArray(staleSnapshot?.rows) ? staleSnapshot.rows : [];
+  for (const [index, row] of staleRows.entries()) {
+    const occurredAt = row?.latestEvent?.createdAt;
+    const timestamp = getValidActivityTimestamp(occurredAt);
+    if (!timestamp) {
+      continue;
+    }
+    items.push({
+      detail:
+        row?.message ||
+        l(
+          "Latest upstream change requires review.",
+          "Son ust-akis degisikligi inceleme gerektiriyor.",
+        ),
+      key: `stale:${row?.closeCycleItemId || index}:${occurredAt}`,
+      meta: row?.latestEvent?.eventCode || row?.latestEvent?.sourceTargetType || "",
+      occurredAt,
+      timestamp,
+      title: getStaleActivityTitle(row, l),
+      to: row?.drillPath || "",
+    });
+  }
+
+  const seen = new Set();
+  return items
+    .sort((left, right) => right.timestamp - left.timestamp)
+    .filter((item) => {
+      const dedupeKey = `${item.occurredAt}:${item.title}:${item.detail}`;
+      if (seen.has(dedupeKey)) {
+        return false;
+      }
+      seen.add(dedupeKey);
+      return true;
+    })
+    .slice(0, 6);
+}
+
+function RecentActivityPanel({ cockpit = null, l }) {
+  const activityItems = buildRecentActivityItems({
+    alertSnapshot: cockpit?.alerts,
+    staleSnapshot: cockpit?.stale,
+    l,
+  });
+
+  return (
+    <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+      <div className="mb-4">
+        <h3 className="text-lg font-semibold text-slate-900">
+          {l("Recent Activity", "Son Aktivite")}
+        </h3>
+      </div>
+
+      {activityItems.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-500">
+          {l(
+            "Recent activity is not available yet.",
+            "Son aktivite henuz mevcut degil.",
+          )}
+        </div>
+      ) : (
+        <ol className="space-y-3">
+          {activityItems.map((item) => (
+            <li
+              key={item.key}
+              className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-sm font-semibold text-slate-900">
+                    {item.title}
+                  </div>
+                  {item.detail ? (
+                    <div className="mt-1 text-sm leading-6 text-slate-600">
+                      {item.detail}
+                    </div>
+                  ) : null}
+                  {item.meta ? (
+                    <div className="mt-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                      {item.meta}
+                    </div>
+                  ) : null}
+                </div>
+                <time
+                  dateTime={item.occurredAt}
+                  className="shrink-0 text-xs font-semibold text-slate-500"
+                >
+                  {formatDateTime(item.occurredAt)}
+                </time>
+              </div>
+              {item.to ? (
+                <Link
+                  to={item.to}
+                  className="mt-3 inline-flex text-sm font-semibold text-sky-700 hover:text-sky-900"
+                >
+                  {l("Open related item", "Ilgili ogeyi ac")}
+                </Link>
+              ) : null}
+            </li>
+          ))}
+        </ol>
+      )}
+    </section>
+  );
+}
+
 function buildTaskBoardPath(cycleId, taskId = null) {
   const params = new URLSearchParams();
   if (cycleId) {
@@ -1410,7 +1551,12 @@ function buildTaskBoardPath(cycleId, taskId = null) {
   return `/app/donem-sonu-islemler/yillik/kapanis-gorevleri${query ? `?${query}` : ""}`;
 }
 
-function buildConsolidationRunPath({ consolidationGroupId, runId }) {
+function buildConsolidationRunPath({
+  consolidationGroupId,
+  runId,
+  cycleId = null,
+  fromCloseCockpit = false,
+}) {
   const params = new URLSearchParams();
   if (toPositiveInt(consolidationGroupId)) {
     params.set("consolidationGroupId", String(toPositiveInt(consolidationGroupId)));
@@ -1418,8 +1564,31 @@ function buildConsolidationRunPath({ consolidationGroupId, runId }) {
   if (toPositiveInt(runId)) {
     params.set("runId", String(toPositiveInt(runId)));
   }
+  if (fromCloseCockpit) {
+    params.set("from", "close-cockpit");
+  }
+  if (toPositiveInt(cycleId)) {
+    params.set("cycleId", String(toPositiveInt(cycleId)));
+  }
   const query = params.toString();
-  return `/app/donem-sonu-islemler/yillik/konsolidasyon-raporlari${query ? `?${query}` : ""}`;
+  return `${CONSOLIDATION_REPORT_ROUTE_PATH}${query ? `?${query}` : ""}`;
+}
+
+function getCockpitBreadcrumbItems(cockpit, l) {
+  const scopeKind = toUpperText(cockpit?.scope?.kind);
+  const cockpitLabel =
+    scopeKind === "CONSOLIDATION_GROUP"
+      ? l("Group Close Cockpit", "Grup Kapanis Kokpiti")
+      : l("Close Cockpit", "Kapanis Kokpiti");
+  const scopeLabel =
+    String(cockpit?.scope?.label || "").trim() ||
+    l("Selected scope", "Secili kapsam");
+  const periodLabel = String(cockpit?.period?.label || "").trim() || "-";
+  return [
+    l("Period Close", "Donem Kapanisi"),
+    cockpitLabel,
+    `${scopeLabel} / ${periodLabel}`,
+  ];
 }
 
 function findOfficialConsolidationRow(rows = [], readiness = null) {
@@ -1817,9 +1986,22 @@ export default function CloseCockpitPage() {
       }
       setError("");
       setActionMessage("");
-      navigate(buildConsolidationRunPath({ consolidationGroupId, runId }));
+      navigate(
+        buildConsolidationRunPath({
+          consolidationGroupId,
+          runId,
+          cycleId: selectedCycleId,
+          fromCloseCockpit: true,
+        }),
+      );
     },
-    [canReadConsolidationRunLocal, consolidationReadiness, l, navigate],
+    [
+      canReadConsolidationRunLocal,
+      consolidationReadiness,
+      l,
+      navigate,
+      selectedCycleId,
+    ],
   );
 
   const onStartConsolidationRun = useCallback(async () => {
@@ -1885,7 +2067,14 @@ export default function CloseCockpitPage() {
       );
       setReloadNonce((current) => current + 1);
       if (runId && canOpenStartedRun) {
-        navigate(buildConsolidationRunPath({ consolidationGroupId, runId }));
+        navigate(
+          buildConsolidationRunPath({
+            consolidationGroupId,
+            runId,
+            cycleId: selectedCycleId,
+            fromCloseCockpit: true,
+          }),
+        );
       }
     } catch (err) {
       setError(
@@ -1902,10 +2091,12 @@ export default function CloseCockpitPage() {
     }
   }, [
     canCreateConsolidationRunLocal,
+    canReadConsolidationRunLocal,
     cockpit,
     consolidationReadiness,
     l,
     navigate,
+    selectedCycleId,
   ]);
 
   if (!canReadCockpit) {
@@ -1945,6 +2136,9 @@ export default function CloseCockpitPage() {
     consolidationReadiness,
     startingConsolidationRun: runningAction === "start-consolidation-run",
   };
+  const cockpitBreadcrumbItems = cockpit
+    ? getCockpitBreadcrumbItems(cockpit, l)
+    : [];
 
   return (
     <div className="space-y-6">
@@ -2096,6 +2290,31 @@ export default function CloseCockpitPage() {
               <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <div>
+                    <nav
+                      aria-label={l(
+                        "Close cockpit breadcrumb",
+                        "Kapanis kokpiti gezinme yolu",
+                      )}
+                      className="mb-3 flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-500"
+                    >
+                      {cockpitBreadcrumbItems.map((item, index) => (
+                        <span
+                          key={`${item}:${index}`}
+                          className={
+                            index === cockpitBreadcrumbItems.length - 1
+                              ? "text-slate-700"
+                              : ""
+                          }
+                        >
+                          {index > 0 ? (
+                            <span className="mr-2 text-slate-300" aria-hidden="true">
+                              &gt;
+                            </span>
+                          ) : null}
+                          {item}
+                        </span>
+                      ))}
+                    </nav>
                     <div className="flex flex-wrap items-center gap-2">
                       {renderStatusPill(
                         getCycleStatusLabel(cockpit?.row?.status, l),
@@ -2166,6 +2385,8 @@ export default function CloseCockpitPage() {
                   hint={l("Rows with non-fresh stale state", "FRESH disi stale durumu olan satirlar")}
                 />
               </section>
+
+              <RecentActivityPanel cockpit={cockpit} l={l} />
 
               <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
                 <div className="mb-4">

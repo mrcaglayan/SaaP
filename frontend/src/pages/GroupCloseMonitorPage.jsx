@@ -1,9 +1,12 @@
-import { ExternalLink, Loader2, PlayCircle } from "lucide-react";
 import { Link } from "react-router-dom";
+import {
+  ConsolidationReadinessSection,
+  ConsolidationRunReadinessStrip,
+} from "../components/close/ConsolidationReadinessSummary.jsx";
 
 function renderStatusPill(label, tone) {
   return (
-    <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${tone}`}>
+    <span className={`inline-flex max-w-full rounded-full border px-2.5 py-1 text-left text-xs font-semibold leading-5 whitespace-normal break-words ${tone}`}>
       {label}
     </span>
   );
@@ -30,7 +33,7 @@ function renderBlockerSummary(blockers = [], l) {
   return (
     <div className="space-y-1">
       {blockers.slice(0, 2).map((blocker, index) => (
-        <div key={`${blocker?.code || "blocker"}:${index}`} className="text-sm text-rose-700">
+        <div key={`${blocker?.code || "blocker"}:${index}`} className="text-sm text-rose-700 break-words">
           {blocker?.message || "-"}
         </div>
       ))}
@@ -49,7 +52,7 @@ function renderAlertSummary(alerts = [], l) {
   }
   return (
     <div className="space-y-1">
-      <div className="text-sm text-slate-700">{alerts[0]?.title || alerts[0]?.message || "-"}</div>
+      <div className="text-sm text-slate-700 break-words">{alerts[0]?.title || alerts[0]?.message || "-"}</div>
       {alerts.length > 1 ? (
         <div className="text-xs text-slate-500">
           {l("Additional alerts", "Ek uyarilar")}: {alerts.length - 1}
@@ -89,151 +92,6 @@ function getScenarioLabel(scenarioCode, l) {
   }
 }
 
-function getReadinessStatusTone(status) {
-  switch (String(status || "").trim().toUpperCase()) {
-    case "READY_TO_START":
-      return "border-emerald-200 bg-emerald-50 text-emerald-700";
-    case "READY_TO_FINALIZE":
-      return "border-cyan-200 bg-cyan-50 text-cyan-700";
-    case "IN_PROGRESS":
-      return "border-sky-200 bg-sky-50 text-sky-700";
-    case "LOCKED":
-      return "border-slate-300 bg-slate-100 text-slate-700";
-    case "WAITING_FOR_ENTITY_CLOSE":
-      return "border-amber-200 bg-amber-50 text-amber-700";
-    default:
-      return "border-slate-200 bg-slate-100 text-slate-700";
-  }
-}
-
-function getReadinessStatusLabel(status, l) {
-  switch (String(status || "").trim().toUpperCase()) {
-    case "WAITING_FOR_ENTITY_CLOSE":
-      return l("Waiting for entity close", "Varlik kapanisi bekleniyor");
-    case "READY_TO_START":
-      return l("Ready to start", "Baslamaya hazir");
-    case "IN_PROGRESS":
-      return l("In progress", "Devam ediyor");
-    case "READY_TO_FINALIZE":
-      return l("Ready to finalize", "Kesinlestirmeye hazir");
-    case "LOCKED":
-      return l("Locked", "Kilitlendi");
-    default:
-      return status || "-";
-  }
-}
-
-function getOwnerHint(readiness, l) {
-  const ownerUserId = Number(readiness?.ownerUserId || 0);
-  const rawHint = String(readiness?.ownerRoleHint || "").trim();
-  const normalizedHint = rawHint.replace(/[\s_-]/g, "").toUpperCase();
-  let hintLabel = rawHint;
-  if (!rawHint || normalizedHint === "GROUPREPORTINGCONTROLLER") {
-    hintLabel = l(
-      "Group reporting controller / consolidation preparer",
-      "Grup raporlama kontroloru / konsolidasyon hazirlayicisi",
-    );
-  }
-  if (ownerUserId > 0) {
-    return `${l("User", "Kullanici")} #${ownerUserId} / ${hintLabel}`;
-  }
-  return hintLabel;
-}
-
-function getTopReadinessReason(readiness, l) {
-  const status = String(readiness?.status || "").trim().toUpperCase();
-  if (status === "READY_TO_START" || status === "LOCKED") {
-    return "";
-  }
-  const reason = Array.isArray(readiness?.blockingReasons)
-    ? readiness.blockingReasons[0]
-    : null;
-  return (
-    reason?.message ||
-    (status === "READY_TO_FINALIZE"
-      ? l(
-          "Operational checks are clear; final workflow approval may still be pending.",
-          "Operasyonel kontroller temiz; nihai is akisi onayi bekliyor olabilir.",
-        )
-      : "")
-  );
-}
-
-function renderReadinessAction({
-  readiness,
-  canCreateConsolidationRun,
-  canReadConsolidationRun,
-  onStartConsolidationRun,
-  onOpenConsolidationRun,
-  startingConsolidationRun,
-  l,
-}) {
-  const status = String(readiness?.status || "").trim().toUpperCase();
-  if (status === "READY_TO_START") {
-    if (readiness?.canStart && canCreateConsolidationRun) {
-      return (
-        <button
-          type="button"
-          onClick={onStartConsolidationRun}
-          disabled={startingConsolidationRun}
-          className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-800 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
-        >
-          {startingConsolidationRun ? (
-            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-          ) : (
-            <PlayCircle className="h-4 w-4" aria-hidden="true" />
-          )}
-          <span>{l("Start consolidation run", "Konsolidasyon kosusunu baslat")}</span>
-        </button>
-      );
-    }
-    return (
-      <span className="text-sm font-semibold text-slate-600">
-        {l(
-          "Ready for consolidation - waiting for consolidation preparer",
-          "Konsolidasyona hazir - konsolidasyon hazirlayicisi bekleniyor",
-        )}
-      </span>
-    );
-  }
-
-  if (status === "IN_PROGRESS" && readiness?.canOpenRun && canReadConsolidationRun) {
-    return (
-      <button
-        type="button"
-        onClick={onOpenConsolidationRun}
-        className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-sky-300 bg-sky-50 px-3 py-2 text-sm font-semibold text-sky-800 hover:bg-sky-100 sm:w-auto"
-      >
-        <ExternalLink className="h-4 w-4" aria-hidden="true" />
-        <span>{l("Open consolidation run", "Konsolidasyon kosusunu ac")}</span>
-      </button>
-    );
-  }
-
-  if (status === "READY_TO_FINALIZE" && readiness?.canOpenRun && canReadConsolidationRun) {
-    return (
-      <button
-        type="button"
-        onClick={onOpenConsolidationRun}
-        className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-cyan-300 bg-cyan-50 px-3 py-2 text-sm font-semibold text-cyan-800 hover:bg-cyan-100 sm:w-auto"
-      >
-        <ExternalLink className="h-4 w-4" aria-hidden="true" />
-        <span>{l("Open finalization review", "Kesinlestirme incelemesini ac")}</span>
-      </button>
-    );
-  }
-
-  if (status === "LOCKED") {
-    return (
-      <span className="text-sm font-semibold text-slate-600">
-        {l("Consolidation locked", "Konsolidasyon kilitlendi")}
-      </span>
-    );
-  }
-
-  return null;
-}
-
 /**
  * Render the consolidation-group monitor used by the PR-03 close cockpit.
  */
@@ -261,10 +119,22 @@ export default function GroupCloseMonitorPage({
     consolidationReadiness && consolidationReadiness.applicable !== false
       ? consolidationReadiness
       : null;
-  const readinessReason = readiness ? getTopReadinessReason(readiness, l) : "";
 
   return (
     <div className="space-y-5">
+      <ConsolidationReadinessSection
+        readiness={readiness}
+        memberRows={memberRows}
+        canCreateConsolidationRun={canCreateConsolidationRun}
+        canReadConsolidationRun={canReadConsolidationRun}
+        onStartConsolidationRun={onStartConsolidationRun}
+        onOpenConsolidationRun={onOpenConsolidationRun}
+        startingConsolidationRun={startingConsolidationRun}
+        getBusinessStatusLabel={getBusinessStatusLabel}
+        getStaleStatusLabel={getStaleStatusLabel}
+        l={l}
+      />
+
       {consolidationRows.length > 0 ? (
         <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="mb-4 flex items-start justify-between gap-4">
@@ -284,18 +154,18 @@ export default function GroupCloseMonitorPage({
             {consolidationRows.map((row) => (
               <div
                 key={row.id}
-                className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
+                className="min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-slate-50 p-4"
               >
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <div className="text-sm font-semibold text-slate-900">
+                <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold text-slate-900 break-words">
                       {row.consolidationGroupLabel}
                     </div>
-                    <div className="mt-1 text-xs text-slate-500">
+                    <div className="mt-1 text-xs text-slate-500 break-words">
                       {l("Run name", "Kosu adi")}: {row.runName || "-"}
                     </div>
                   </div>
-                  <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
                     {row.scenarioCode
                       ? renderStatusPill(
                           getScenarioLabel(row.scenarioCode, l),
@@ -317,33 +187,33 @@ export default function GroupCloseMonitorPage({
                   </div>
                 </div>
                 <div className="mt-3 grid gap-3 text-sm text-slate-600 md:grid-cols-5">
-                  <div>
+                  <div className="min-w-0">
                     <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
                       {l("Presentation currency", "Sunum para birimi")}
                     </div>
-                    <div className="mt-1">{row.presentationCurrencyCode || "-"}</div>
+                    <div className="mt-1 break-words">{row.presentationCurrencyCode || "-"}</div>
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
                       {l("Scenario / version", "Senaryo / versiyon")}
                     </div>
-                    <div className="mt-1">
+                    <div className="mt-1 break-words">
                       {row.scenarioCode
                         ? `${getScenarioLabel(row.scenarioCode, l)} / ${row.versionNo || 1}`
                         : "-"}
                     </div>
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
                       {l("Due date", "Son tarih")}
                     </div>
-                    <div className="mt-1">{formatDateTime(row.dueAt)}</div>
+                    <div className="mt-1 break-words">{formatDateTime(row.dueAt)}</div>
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
                       {l("Due window", "Sure penceresi")}
                     </div>
-                    <div className="mt-1">
+                    <div className="mt-1 break-words">
                       {row.dueState === "OVERDUE"
                         ? `${row.overdueHours || 0}h`
                         : row.dueState === "DUE_SOON"
@@ -351,45 +221,22 @@ export default function GroupCloseMonitorPage({
                           : "-"}
                     </div>
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
                       {l("Link state", "Bag durumu")}
                     </div>
-                    <div className="mt-1">{row.linkState === "LINKED" ? l("Linked", "Bagli") : l("Expected only", "Sadece beklenen")}</div>
+                    <div className="mt-1 break-words">{row.linkState === "LINKED" ? l("Linked", "Bagli") : l("Expected only", "Sadece beklenen")}</div>
                   </div>
                 </div>
-                {readiness ? (
-                  <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-3 lg:flex-row lg:items-start lg:justify-between">
-                    <div className="min-w-0 space-y-2">
-                      <div className="flex flex-wrap items-center gap-2">
-                        {renderStatusPill(
-                          getReadinessStatusLabel(readiness.status, l),
-                          getReadinessStatusTone(readiness.status),
-                        )}
-                        <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                          {l("Ready to consolidate", "Konsolidasyona hazirlik")}
-                        </span>
-                      </div>
-                      {readinessReason ? (
-                        <div className="text-sm text-slate-700">{readinessReason}</div>
-                      ) : null}
-                      <div className="text-xs text-slate-500">
-                        {l("Owner", "Sahip")}: {getOwnerHint(readiness, l)}
-                      </div>
-                    </div>
-                    <div className="flex shrink-0 flex-col items-stretch gap-2 sm:items-end">
-                      {renderReadinessAction({
-                        readiness,
-                        canCreateConsolidationRun,
-                        canReadConsolidationRun,
-                        onStartConsolidationRun,
-                        onOpenConsolidationRun,
-                        startingConsolidationRun,
-                        l,
-                      })}
-                    </div>
-                  </div>
-                ) : null}
+                <ConsolidationRunReadinessStrip
+                  readiness={readiness}
+                  canCreateConsolidationRun={canCreateConsolidationRun}
+                  canReadConsolidationRun={canReadConsolidationRun}
+                  onStartConsolidationRun={onStartConsolidationRun}
+                  onOpenConsolidationRun={onOpenConsolidationRun}
+                  startingConsolidationRun={startingConsolidationRun}
+                  l={l}
+                />
                 <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-3">
                   <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
                     {l("Blockers", "Blokajlar")}
@@ -434,10 +281,10 @@ export default function GroupCloseMonitorPage({
           {memberGroups.map((group) => (
             <div
               key={group.entityLabel}
-              className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
+              className="min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-slate-50 p-4"
             >
-              <div className="mb-3 flex items-center justify-between gap-3">
-                <div className="text-sm font-semibold text-slate-900">{group.entityLabel}</div>
+              <div className="mb-3 flex min-w-0 items-center justify-between gap-3">
+                <div className="min-w-0 text-sm font-semibold text-slate-900 break-words">{group.entityLabel}</div>
                 <div className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
                   {group.rows.length}
                 </div>
@@ -446,17 +293,17 @@ export default function GroupCloseMonitorPage({
                 {group.rows.map((row) => (
                   <div
                     key={row.id}
-                    className="rounded-2xl border border-slate-200 bg-white p-3"
+                    className="min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white p-3"
                   >
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div>
-                        <div className="text-sm font-semibold text-slate-900">
+                    <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold text-slate-900 break-words">
                           {row.scopeLabel}
                           {row.bookId ? ` / ${row.bookLabel}` : ""}
                         </div>
-                        <div className="mt-1 text-xs text-slate-500">{row.itemKey}</div>
+                        <div className="mt-1 text-xs text-slate-500 break-words">{row.itemKey}</div>
                       </div>
-                      <div className="flex flex-wrap items-center gap-2">
+                      <div className="flex min-w-0 flex-wrap items-center gap-2">
                         {renderStatusPill(
                           getBusinessStatusLabel(row.businessStatus),
                           getBusinessStatusTone(row.businessStatus),
@@ -472,23 +319,23 @@ export default function GroupCloseMonitorPage({
                       </div>
                     </div>
                     <div className="mt-3 grid gap-3 text-sm text-slate-600 md:grid-cols-4">
-                      <div>
+                      <div className="min-w-0">
                         <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
                           {l("Item type", "Oge tipi")}
                         </div>
-                        <div className="mt-1">{row.itemType}</div>
+                        <div className="mt-1 break-words">{row.itemType}</div>
                       </div>
-                      <div>
+                      <div className="min-w-0">
                         <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
                           {l("Due date", "Son tarih")}
                         </div>
-                        <div className="mt-1">{formatDateTime(row.dueAt)}</div>
+                        <div className="mt-1 break-words">{formatDateTime(row.dueAt)}</div>
                       </div>
-                      <div>
+                      <div className="min-w-0">
                         <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
                           {l("Due window", "Sure penceresi")}
                         </div>
-                        <div className="mt-1">
+                        <div className="mt-1 break-words">
                           {row.dueState === "OVERDUE"
                             ? `${row.overdueHours || 0}h`
                             : row.dueState === "DUE_SOON"
@@ -496,11 +343,11 @@ export default function GroupCloseMonitorPage({
                               : "-"}
                         </div>
                       </div>
-                      <div>
+                      <div className="min-w-0">
                         <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
                           {l("Link state", "Bag durumu")}
                         </div>
-                        <div className="mt-1">{row.linkState === "LINKED" ? l("Linked", "Bagli") : l("Expected only", "Sadece beklenen")}</div>
+                        <div className="mt-1 break-words">{row.linkState === "LINKED" ? l("Linked", "Bagli") : l("Expected only", "Sadece beklenen")}</div>
                       </div>
                     </div>
                     <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-3">

@@ -33,6 +33,8 @@ import { createReportFingerprint } from "../utils/reportFingerprint.js";
 
 const CONSOLIDATION_REPORT_ROUTE_PATH =
   "/app/donem-sonu-islemler/yillik/konsolidasyon-raporlari";
+const CLOSE_COCKPIT_ROUTE_PATH =
+  "/app/donem-sonu-islemler/yillik/kapanis-kokpiti";
 const PERSISTED_MEMBER_SUPPORT_ITEM_CODES = Object.freeze({
   memberBreakdown: "MEMBER_BREAKDOWN",
   selectedMemberLocalDrill: "SELECTED_MEMBER_LOCAL_DRILL",
@@ -302,6 +304,12 @@ export default function ConsolidationReportsPage() {
   const [loadingRuns, setLoadingRuns] = useState(false);
   const [runs, setRuns] = useState([]);
   const requestedRunId = String(toInt(searchParams.get("runId")) || "");
+  const openedFromCloseCockpit =
+    String(searchParams.get("from") || "").trim() === "close-cockpit";
+  const closeCockpitCycleId = toInt(searchParams.get("cycleId"));
+  const closeCockpitBackPath = closeCockpitCycleId
+    ? `${CLOSE_COCKPIT_ROUTE_PATH}?cycleId=${closeCockpitCycleId}`
+    : CLOSE_COCKPIT_ROUTE_PATH;
   const [form, setForm] = useState({
     runId: requestedRunId,
     includeDraft: false,
@@ -1632,13 +1640,26 @@ export default function ConsolidationReportsPage() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-semibold text-slate-900">
-          {t("consolidationReports.title")}
-        </h1>
-        <p className="mt-1 text-sm text-slate-600">
-          {t("consolidationReports.subtitle")}
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-semibold text-slate-900">
+            {t("consolidationReports.title")}
+          </h1>
+          <p className="mt-1 text-sm text-slate-600">
+            {t("consolidationReports.subtitle")}
+          </p>
+        </div>
+        {openedFromCloseCockpit ? (
+          <Link
+            to={closeCockpitBackPath}
+            className="rounded-lg border border-sky-300 bg-sky-50 px-3 py-2 text-sm font-semibold text-sky-700 hover:bg-sky-100"
+          >
+            {t(
+              "consolidationReports.backToCloseCockpit",
+              "Back to Group Close Cockpit",
+            )}
+          </Link>
+        ) : null}
       </div>
 
       {error && (

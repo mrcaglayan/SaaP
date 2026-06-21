@@ -89,9 +89,17 @@ async function main() {
   }
 
   const monitorSource = await readSource("frontend/src/pages/GroupCloseMonitorPage.jsx");
-  assert(monitorSource.includes("readiness?.ownerUserId"));
-  assert(monitorSource.includes("Group reporting controller / consolidation preparer"));
-  assert(monitorSource.includes("Kullanici"));
+  const readinessSummarySource = await readSource(
+    "frontend/src/components/close/ConsolidationReadinessSummary.jsx",
+  );
+  const readinessUtilsSource = await readSource(
+    "frontend/src/components/close/consolidationReadinessUtils.js",
+  );
+  assert(monitorSource.includes("<ConsolidationReadinessSection"));
+  assert(readinessSummarySource.includes("getOwnerHint(readiness, l)"));
+  assert(readinessUtilsSource.includes("readiness?.ownerUserId"));
+  assert(readinessUtilsSource.includes("Group reporting controller / consolidation preparer"));
+  assert(readinessUtilsSource.includes("Kullanici"));
 
   console.log(
     "Consolidation ready-to-start RBAC checks passed (owner role priority + permission-aware payload).",

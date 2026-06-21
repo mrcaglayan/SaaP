@@ -255,6 +255,7 @@
     "test:consolidation:ready-start:workflow-regression": "node scripts/test-consolidation-ready-to-start-no-workflow-regression.js",
     "test:consolidation:ready-start:idempotent-run": "node scripts/test-consolidation-ready-to-start-idempotent-run.js",
     "test:consolidation:ready-start:frontend": "node scripts/test-consolidation-ready-to-start-frontend-contract.js",
+    "test:consolidation:ready-start:ux": "node scripts/test-consolidation-ready-to-start-ux-polish.js",
     "test:consolidation:ready-start:alerts": "node scripts/test-consolidation-ready-to-start-alerts.js",
     "ops:consolidation:canonical-campaign": "node scripts/consolidation-canonical-backfill-campaign.js",
     "ops:consolidation:canonical-governance-review": "node scripts/consolidation-canonical-governance-review.js",
