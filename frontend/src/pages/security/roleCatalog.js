@@ -454,6 +454,19 @@ const ROLE_CATALOG = Object.freeze({
     workflowFamily: "CROSS_WORKFLOW",
     sortOrder: 206,
   },
+  TaxConfigurationManager: {
+    code: "Tax Configuration Manager",
+    category: "composable",
+    summary:
+      "Maintains tax regimes, tax codes, tax rules, and tax account mappings without broad onboarding authority.",
+    capabilities: [
+      "Tax regime setup",
+      "Tax rule maintenance",
+      "Tax account mapping",
+    ],
+    recommendedScopes: ["TENANT", "LEGAL_ENTITY"],
+    sortOrder: 207,
+  },
   GLOperator: {
     category: "composable",
     summary:

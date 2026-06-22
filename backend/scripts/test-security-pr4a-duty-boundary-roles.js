@@ -103,6 +103,7 @@ async function main() {
     "LocalUserAdmin",
     "MasterDataSteward",
     "CounterpartyCardEditor",
+    "TaxConfigurationManager",
     "EntityAPController",
     "OUAPSubmitter",
     "CountryAPApprover",
@@ -141,6 +142,7 @@ async function main() {
   assert.deepEqual(ROLE_CAPABILITY_GROUPS.GLPostingAuthority, ["gl.posting"]);
   assert.deepEqual(ROLE_CAPABILITY_GROUPS.LocalUserAdmin, []);
   assert.deepEqual(ROLE_CAPABILITY_GROUPS.CounterpartyCardEditor, []);
+  assert.deepEqual(ROLE_CAPABILITY_GROUPS.TaxConfigurationManager, ["tax.configuration"]);
   assert.deepEqual(ROLE_CAPABILITY_GROUPS.EntityAPController, []);
   assert.deepEqual(ROLE_CAPABILITY_GROUPS.OUAPSubmitter, []);
   assert.deepEqual(ROLE_CAPABILITY_GROUPS.CountryAPApprover, []);
@@ -159,9 +161,25 @@ async function main() {
   assert.deepEqual(ROLE_CAPABILITY_GROUPS.BranchOperator, ["gl.readonly"]);
 
   assertRoleHas(permissionCodesByRole, "SystemAdmin", "onboarding.company.setup");
+  assertRoleHas(permissionCodesByRole, "SystemAdmin", "org.tree.read");
+  assertRoleHas(permissionCodesByRole, "SystemAdmin", "tax.setup.read");
+  assertRoleHas(permissionCodesByRole, "SystemAdmin", "tax.setup.upsert");
+  assertRoleHas(permissionCodesByRole, "SystemAdmin", "gl.account.read");
   assertRoleHas(permissionCodesByRole, "SystemAdmin", "workflow.definition.write");
   assertRoleHas(permissionCodesByRole, "SystemAdmin", "workflow.assignment.write");
+  assertRoleLacks(permissionCodesByRole, "SystemAdmin", "gl.account.upsert");
   assertRoleLacks(permissionCodesByRole, "SystemAdmin", "gl.journal.post");
+
+  assertRoleHas(permissionCodesByRole, "TaxConfigurationManager", "org.tree.read");
+  assertRoleHas(permissionCodesByRole, "TaxConfigurationManager", "tax.setup.read");
+  assertRoleHas(permissionCodesByRole, "TaxConfigurationManager", "tax.setup.upsert");
+  assertRoleHas(permissionCodesByRole, "TaxConfigurationManager", "gl.account.read");
+  assertRoleLacks(
+    permissionCodesByRole,
+    "TaxConfigurationManager",
+    "onboarding.company.setup"
+  );
+  assertRoleLacks(permissionCodesByRole, "TaxConfigurationManager", "gl.account.upsert");
 
   assertRoleHas(permissionCodesByRole, "LocalUserAdmin", "security.user_admin.local");
   assertRoleLacks(permissionCodesByRole, "LocalUserAdmin", "security.role_assignment.upsert");

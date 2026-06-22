@@ -652,8 +652,8 @@ const CLOSE_TASK_TEMPLATE_PAGE_PERMISSIONS = [
 ];
 const FX_RATE_PAGE_PERMISSIONS = ["fx.rate.read", "fx.rate.bulk_upsert"];
 const TAX_SETUP_PAGE_PERMISSIONS = [
-  "org.tree.read",
-  "onboarding.company.setup",
+  "tax.setup.read",
+  "tax.setup.upsert",
 ];
 const CONSOLIDATION_SETUP_PAGE_PERMISSIONS = [
   "consolidation.group.read",

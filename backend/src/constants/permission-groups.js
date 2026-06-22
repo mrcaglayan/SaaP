@@ -72,6 +72,14 @@ export const PERMISSION_GROUPS = {
       "org.shareholder.capital_fulfillment.upsert",
     ],
   },
+  "tax.configuration": {
+    permissions: [
+      "org.tree.read",
+      "tax.setup.read",
+      "tax.setup.upsert",
+      "gl.account.read",
+    ],
+  },
   "bank.readonly": {
     permissions: [
       "bank.accounts.read",

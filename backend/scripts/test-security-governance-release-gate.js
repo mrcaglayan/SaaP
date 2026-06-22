@@ -14,6 +14,8 @@ const GOVERNANCE_BACKEND_TESTS = Object.freeze([
   "test-cari-pr3c-unified-approval-pilot.js",
   "test-followup-prf06-workflow-decisions-runtime.js",
   "test-security-pr4a-duty-boundary-roles.js",
+  "test-security-pr73-tax-configuration-rbac.js",
+  "test-security-pr73-tax-configuration-runtime.js",
   "test-security-pr4b-sod-service-integration.js",
   "test-payments-prb04-batches.js",
   "test-payroll-prp06-partial-settlement-and-manual-override.js",

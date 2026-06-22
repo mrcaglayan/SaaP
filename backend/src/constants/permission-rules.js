@@ -43,6 +43,8 @@ export const PERMISSION_DEPENDENCIES = Object.freeze({
   "payroll.settlement.override.approve": Object.freeze(["payroll.settlement.override.read"]),
   "payroll.close.approve": Object.freeze(["payroll.close.read"]),
   "payroll.close.reopen": Object.freeze(["payroll.close.read"]),
+  "tax.setup.read": Object.freeze(["org.tree.read"]),
+  "tax.setup.upsert": Object.freeze(["tax.setup.read", "org.tree.read"]),
 });
 
 export const PERMISSION_CONFLICTS = Object.freeze([

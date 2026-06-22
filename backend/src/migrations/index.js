@@ -193,6 +193,7 @@ import migration204EvidenceCommentsGenericScopeForCloseTasks from "./m204_eviden
 import migration205CloseAlertsGenericSubject from "./m205_close_alerts_generic_subject.js";
 import migration206EvidenceCommentsNullableLegalEntityScope from "./m206_evidence_comments_nullable_legal_entity_scope.js";
 import migration207CloseAlertsActionRequiredType from "./m207_close_alerts_action_required_type.js";
+import migration208TaxConfigurationRbac from "./m208_tax_configuration_rbac.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -390,6 +391,7 @@ const migrations = [
   migration205CloseAlertsGenericSubject,
   migration206EvidenceCommentsNullableLegalEntityScope,
   migration207CloseAlertsActionRequiredType,
+  migration208TaxConfigurationRbac,
 ];
 
 export default migrations;

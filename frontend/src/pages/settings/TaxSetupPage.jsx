@@ -267,8 +267,8 @@ export default function TaxSetupPage() {
   const { hasPermission } = useAuth();
   const { language } = useI18n();
   const l = useCallback((en, tr) => (language === "tr" ? tr : en), [language]);
-const canRead = hasPermission("org.tree.read");
-const canWrite = hasPermission("onboarding.company.setup");
+const canRead = hasPermission("tax.setup.read");
+const canWrite = hasPermission("tax.setup.upsert");
 const canReadAccounts = hasPermission("gl.account.read");
 const canUpsertAccounts = hasPermission("gl.account.upsert");
   const [loading, setLoading] = useState(false);
@@ -523,7 +523,7 @@ useEffect(() => {
 async function onCreateRegime(event) {
   event.preventDefault();
   if (!canWrite) {
-    setError(l("Missing permission: onboarding.company.setup", "Eksik yetki: onboarding.company.setup"));
+    setError(l("Missing permission: tax.setup.upsert", "Eksik yetki: tax.setup.upsert"));
     return;
   }
   const countryId = toPositiveInt(regimeForm.countryId);
@@ -565,7 +565,7 @@ async function onCreateRegime(event) {
 async function onCreateCode(event) {
   event.preventDefault();
   if (!canWrite) {
-    setError(l("Missing permission: onboarding.company.setup", "Eksik yetki: onboarding.company.setup"));
+    setError(l("Missing permission: tax.setup.upsert", "Eksik yetki: tax.setup.upsert"));
     return;
   }
   const regimeId = toPositiveInt(codeForm.regimeId) || activeRegimeId;
@@ -601,7 +601,7 @@ async function onCreateCode(event) {
 async function onCreateRule(event) {
   event.preventDefault();
   if (!canWrite) {
-    setError(l("Missing permission: onboarding.company.setup", "Eksik yetki: onboarding.company.setup"));
+    setError(l("Missing permission: tax.setup.upsert", "Eksik yetki: tax.setup.upsert"));
     return;
   }
   const ruleId = toPositiveInt(editingRuleId);
@@ -717,7 +717,7 @@ async function onCreateRule(event) {
   async function onCreateMapping(event) {
   event.preventDefault();
   if (!canWrite) {
-    setError(l("Missing permission: onboarding.company.setup", "Eksik yetki: onboarding.company.setup"));
+    setError(l("Missing permission: tax.setup.upsert", "Eksik yetki: tax.setup.upsert"));
     return;
   }
   const regimeId = toPositiveInt(mappingForm.regimeId) || activeRegimeId;
@@ -1056,7 +1056,7 @@ return (
     ) : null}
     {!canRead ? (
       <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-        {l("Missing permission: org.tree.read", "Eksik yetki: org.tree.read")}
+        {l("Missing permission: tax.setup.read", "Eksik yetki: tax.setup.read")}
       </div>
     ) : null}
     <section className="rounded-xl border border-slate-200 bg-white p-4">

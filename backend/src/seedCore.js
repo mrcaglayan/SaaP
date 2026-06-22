@@ -661,6 +661,8 @@ const PERMISSIONS = [
     "consolidation.report.income_statement.read",
     "Read consolidation income statement",
   ],
+  ["tax.setup.read", "Read tax setup configuration"],
+  ["tax.setup.upsert", "Create/update tax setup configuration"],
   ["onboarding.company.setup", "Run company onboarding bootstrap flow"],
 ];
 
@@ -792,6 +794,10 @@ const COUNTERPARTY_CARD_EDITOR_PERMISSION_CODES = buildPermissionList({
     "cari.card.upsert",
     "gl.account.read",
   ],
+});
+
+const TAX_CONFIGURATION_MANAGER_PERMISSION_CODES = buildPermissionList({
+  permissionGroups: ["tax.configuration"],
 });
 
 const ENTITY_AP_CONTROLLER_PERMISSION_CODES = buildPermissionList({
@@ -1297,6 +1303,7 @@ export const ROLE_CAPABILITY_GROUPS = Object.freeze({
   LocalUserAdmin: Object.freeze([]),
   MasterDataSteward: Object.freeze(["gl.masterdata"]),
   CounterpartyCardEditor: Object.freeze([]),
+  TaxConfigurationManager: Object.freeze(["tax.configuration"]),
   EntityAPController: Object.freeze([]),
   OUAPSubmitter: Object.freeze([]),
   CountryAPApprover: Object.freeze([]),
@@ -1423,6 +1430,11 @@ const ALL_ROLE_DEFINITIONS = attachRoleMetadata([
     code: "CounterpartyCardEditor",
     name: "Counterparty Card Editor",
     permissions: COUNTERPARTY_CARD_EDITOR_PERMISSION_CODES,
+  },
+  {
+    code: "TaxConfigurationManager",
+    name: "Tax Configuration Manager",
+    permissions: TAX_CONFIGURATION_MANAGER_PERMISSION_CODES,
   },
   {
     code: "EntityAPController",

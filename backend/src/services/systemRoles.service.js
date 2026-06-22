@@ -15,6 +15,10 @@ const SECURITY_ADMIN_EXCLUDED_PERMISSION_CODES = new Set([
 
 const SYSTEM_ADMIN_ADDITIONAL_PERMISSION_CODES = new Set([
   "security.admin.system",
+  "org.tree.read",
+  "tax.setup.read",
+  "tax.setup.upsert",
+  "gl.account.read",
   "workflow.definition.read",
   "workflow.definition.write",
   "workflow.assignment.read",
